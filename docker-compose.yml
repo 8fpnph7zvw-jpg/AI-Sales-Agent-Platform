@@ -1,0 +1,190 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-sales-agent}
+
+x-backend-environment: &backend-environment
+  APP_ENV: ${APP_ENV:-production}
+  API_PREFIX: /api/v1
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+  REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+  JWT_ISSUER: ${JWT_ISSUER:-ai-sales-agent-platform}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-ai-sales-agent-api}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+  DIFY_API_BASE_URL: ${DIFY_API_BASE_URL:-https://api.dify.ai/v1}
+  DIFY_API_KEY: ${DIFY_API_KEY:-}
+  DIFY_TIMEOUT_SECONDS: ${DIFY_TIMEOUT_SECONDS:-30}
+  CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?Set CONFIG_ENCRYPTION_KEY in .env}
+  CONFIG_ENCRYPTION_KEY_VERSION: ${CONFIG_ENCRYPTION_KEY_VERSION:-v1}
+
+x-service-hardening: &service-hardening
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+  mysql:
+    <<: *service-hardening
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_sales_agent}
+      MYSQL_USER: ${MYSQL_USER:-ai_sales_agent}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - data_net
+
+  redis:
+    <<: *service-hardening
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+        "--requirepass",
+        "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}",
+      ]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=$${REDIS_PASSWORD} redis-cli --no-auth-warning ping | grep PONG",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - data_net
+
+  migration:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ai-sales-agent-backend:${IMAGE_TAG:-local}
+    environment: *backend-environment
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      disable: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - data_net
+
+  backend:
+    <<: *service-hardening
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ai-sales-agent-backend:${IMAGE_TAG:-local}
+    init: true
+    environment: *backend-environment
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "${BACKEND_WORKERS:-2}",
+        "--proxy-headers",
+        "--forwarded-allow-ips=*",
+      ]
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - edge_net
+      - data_net
+
+  frontend:
+    <<: *service-hardening
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    image: ai-sales-agent-frontend:${IMAGE_TAG:-local}
+    init: true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - edge_net
+
+  nginx:
+    <<: *service-hardening
+    image: nginx:1.27-alpine
+    init: true
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - edge_net
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  edge_net:
+  data_net:
+    internal: true

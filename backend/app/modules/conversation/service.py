@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.dependencies.auth import Principal
+from app.core.exceptions import ConflictError, ResourceNotFoundError
+from app.models.conversation.message import Message
+from app.models.system.outbox_event import OutboxEvent
+from app.modules.conversation.repository import ConversationRepository
+from app.modules.conversation.schemas import (
+    ConversationMessageCreate,
+    ConversationMessageResponse,
+)
+
+
+class ConversationService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        repository: ConversationRepository,
+    ) -> None:
+        self.session = session
+        self.repository = repository
+
+    async def send_message(
+        self,
+        principal: Principal,
+        payload: ConversationMessageCreate,
+    ) -> ConversationMessageResponse:
+        conversation = await self.repository.get_by_public_id_for_update(
+            principal.tenant_id,
+            payload.conversation_id,
+        )
+        if conversation is None:
+            raise ResourceNotFoundError("Conversation")
+        if conversation.status in {"closed", "blocked"}:
+            raise ConflictError(
+                "CONVERSATION_NOT_WRITABLE",
+                "Messages cannot be sent to a closed or blocked conversation.",
+            )
+
+        # Re-check after obtaining the conversation lock.
+        existing = await self.repository.get_message_by_idempotency(
+            principal.tenant_id,
+            payload.idempotency_key,
+        )
+        if existing is not None:
+            if existing.conversation_id != conversation.id:
+                raise ConflictError(
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "Idempotency key was already used for another conversation.",
+                )
+            return self._response(existing, payload.conversation_id, duplicate=True)
+
+        now = datetime.now(UTC)
+        message = Message(
+            tenant_id=principal.tenant_id,
+            conversation_id=conversation.id,
+            connector_id=await self.repository.get_connector_id(conversation.customer_session_id),
+            sequence_no=await self.repository.next_sequence(conversation.id),
+            direction="outbound",
+            sender_type="user",
+            sender_ref=principal.user_public_id,
+            message_type=payload.message_type,
+            content_text=payload.content,
+            content_json=payload.content_json,
+            idempotency_key=payload.idempotency_key,
+            status="queued",
+            created_at=now,
+        )
+        self.repository.add_message(message)
+        await self.session.flush()
+
+        conversation.last_message_at = now
+        conversation.version += 1
+        self.session.add(
+            OutboxEvent(
+                tenant_id=principal.tenant_id,
+                aggregate_type="conversation",
+                aggregate_id=conversation.public_id,
+                event_type="connector.message.send.requested.v1",
+                payload={
+                    "message_id": message.public_id,
+                    "conversation_id": conversation.public_id,
+                },
+                available_at=now,
+            )
+        )
+        await self.session.commit()
+        return self._response(message, conversation.public_id)
+
+    @staticmethod
+    def _response(
+        message: Message,
+        conversation_public_id: str,
+        *,
+        duplicate: bool = False,
+    ) -> ConversationMessageResponse:
+        return ConversationMessageResponse(
+            id=message.public_id,
+            conversation_id=conversation_public_id,
+            sequence_no=message.sequence_no,
+            direction=message.direction,
+            sender_type=message.sender_type,
+            message_type=message.message_type,
+            content=message.content_text or "",
+            status=message.status,
+            duplicate=duplicate,
+            created_at=message.created_at,
+        )

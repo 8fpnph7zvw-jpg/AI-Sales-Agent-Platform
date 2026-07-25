@@ -1,0 +1,13 @@
+**
+!backend/
+!backend/**
+!database/
+!database/**
+
+backend/.venv/
+backend/.pytest_cache/
+backend/.ruff_cache/
+**/__pycache__/
+**/*.pyc
+.env
+.git/
