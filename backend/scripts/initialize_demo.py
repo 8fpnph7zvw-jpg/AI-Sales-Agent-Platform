@@ -354,6 +354,7 @@ async def _upsert_workflow(session: AsyncSession, tenant: Tenant, admin: User) -
         workflow = Workflow(
             tenant_id=tenant.id,
             name=WORKFLOW_NAME,
+            trigger_type="customer_inquiry",
             version=1,
         )
         session.add(workflow)

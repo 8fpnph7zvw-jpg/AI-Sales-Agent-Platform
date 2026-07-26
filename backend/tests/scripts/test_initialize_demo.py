@@ -3,6 +3,11 @@ from __future__ import annotations
 import importlib.util
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from app.models.workflow.workflow import Workflow
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = BACKEND_ROOT / "scripts" / "initialize_demo.py"
@@ -62,3 +67,37 @@ def test_demo_initializer_uses_orm_and_is_wired_into_docker_migration() -> None:
     assert "op.execute" not in source
     assert "sqlalchemy.text" not in source
     assert "python scripts/initialize_demo.py" in compose
+
+
+@pytest.mark.asyncio
+async def test_new_workflow_has_trigger_type_before_first_flush() -> None:
+    demo = _load_script()
+
+    class ScalarResult:
+        @staticmethod
+        def all() -> list[object]:
+            return []
+
+    class Session:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+
+        async def scalar(self, _statement: object) -> None:
+            return None
+
+        def add(self, model: object) -> None:
+            self.added.append(model)
+
+        async def flush(self) -> None:
+            workflow = next(item for item in self.added if isinstance(item, Workflow))
+            assert workflow.trigger_type == "customer_inquiry"
+
+        async def scalars(self, _statement: object) -> ScalarResult:
+            return ScalarResult()
+
+    session = Session()
+    await demo._upsert_workflow(
+        session,
+        SimpleNamespace(id=1),
+        SimpleNamespace(id=2),
+    )
