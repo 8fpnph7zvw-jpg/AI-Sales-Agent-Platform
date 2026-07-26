@@ -92,3 +92,47 @@ class QuotationResponse(BaseModel):
     valid_until: date | None
     items: list[QuotationItemResponse]
     created_at: datetime
+
+
+class QuotationListItem(BaseModel):
+    id: str
+    quotation_no: str
+    customer_id: str
+    customer_name: str
+    status: str
+    currency: str
+    subtotal: Decimal
+    discount_amount: Decimal
+    tax_amount: Decimal
+    shipping_amount: Decimal
+    total_amount: Decimal
+    valid_until: date | None
+    created_at: datetime
+
+
+class QuotationListResponse(BaseModel):
+    data: list[QuotationListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class ProductRead(BaseModel):
+    id: str
+    sku: str
+    name: str
+    description: str | None
+    category: str | None
+    unit: str
+    currency: str
+    base_price: Decimal
+    min_order_qty: Decimal | None
+    status: str
+    created_at: datetime
+
+
+class ProductListResponse(BaseModel):
+    data: list[ProductRead]
+    total: int
+    limit: int
+    offset: int

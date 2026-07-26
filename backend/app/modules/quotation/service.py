@@ -12,9 +12,13 @@ from app.models.quotation.quotation import Quotation
 from app.models.quotation.quotation_item import QuotationItem
 from app.modules.quotation.repository import QuotationRepository
 from app.modules.quotation.schemas import (
+    ProductListResponse,
+    ProductRead,
     QuotationCreate,
     QuotationItemCreate,
     QuotationItemResponse,
+    QuotationListItem,
+    QuotationListResponse,
     QuotationResponse,
 )
 
@@ -30,6 +34,82 @@ class QuotationService:
     ) -> None:
         self.session = session
         self.repository = repository
+
+    async def list_quotations(
+        self,
+        principal: Principal,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None,
+    ) -> QuotationListResponse:
+        created_by = (
+            None if "quotation.read_all" in principal.permissions else principal.user_id
+        )
+        rows, total = await self.repository.list_quotations(
+            principal.tenant_id,
+            limit=limit,
+            offset=offset,
+            status=status,
+            created_by=created_by,
+        )
+        return QuotationListResponse(
+            data=[
+                QuotationListItem(
+                    id=quotation.public_id,
+                    quotation_no=quotation.quotation_no,
+                    customer_id=customer.public_id,
+                    customer_name=customer.name,
+                    status=quotation.status,
+                    currency=quotation.currency,
+                    subtotal=quotation.subtotal,
+                    discount_amount=quotation.discount_amount,
+                    tax_amount=quotation.tax_amount,
+                    shipping_amount=quotation.shipping_amount,
+                    total_amount=quotation.total_amount,
+                    valid_until=quotation.valid_until,
+                    created_at=quotation.created_at,
+                )
+                for quotation, customer in rows
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def list_products(
+        self,
+        principal: Principal,
+        *,
+        limit: int,
+        offset: int,
+    ) -> ProductListResponse:
+        products, total = await self.repository.list_products(
+            principal.tenant_id,
+            limit=limit,
+            offset=offset,
+        )
+        return ProductListResponse(
+            data=[
+                ProductRead(
+                    id=product.public_id,
+                    sku=product.sku,
+                    name=product.name,
+                    description=product.description,
+                    category=product.category,
+                    unit=product.unit,
+                    currency=product.currency,
+                    base_price=product.base_price,
+                    min_order_qty=product.min_order_qty,
+                    status=product.status,
+                    created_at=product.created_at,
+                )
+                for product in products
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
 
     async def create(
         self,

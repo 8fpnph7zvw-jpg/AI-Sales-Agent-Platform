@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.connector.connector import Connector
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
+from app.models.customer.customer import Customer
 from app.models.customer.customer_session import CustomerSession
 
 
@@ -26,6 +28,138 @@ class ConversationRepository:
             .with_for_update()
         )
         return await self.session.scalar(statement)
+
+    async def get_customer(self, tenant_id: int, public_id: str) -> Customer | None:
+        return await self.session.scalar(
+            select(Customer).where(
+                Customer.tenant_id == tenant_id,
+                Customer.public_id == public_id,
+                Customer.deleted_at.is_(None),
+            )
+        )
+
+    async def get_demo_connector(self, tenant_id: int) -> Connector | None:
+        statement = (
+            select(Connector)
+            .where(
+                Connector.tenant_id == tenant_id,
+                Connector.deleted_at.is_(None),
+                Connector.provider == "whatsapp",
+                Connector.external_account_id == "demo-template",
+            )
+            .limit(1)
+        )
+        return await self.session.scalar(statement)
+
+    async def get_agent_console_session(
+        self,
+        tenant_id: int,
+        customer_id: int,
+        connector_id: int,
+    ) -> CustomerSession | None:
+        statement = select(CustomerSession).where(
+            CustomerSession.tenant_id == tenant_id,
+            CustomerSession.customer_id == customer_id,
+            CustomerSession.connector_id == connector_id,
+            CustomerSession.external_thread_id == "agent-console",
+        )
+        return await self.session.scalar(statement)
+
+    async def list(
+        self,
+        tenant_id: int,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None,
+        search: str | None,
+        assigned_user_id: int | None,
+    ) -> tuple[list[tuple[Conversation, Customer, Connector, str | None]], int]:
+        latest_message = (
+            select(Message.content_text)
+            .where(Message.conversation_id == Conversation.id)
+            .order_by(Message.sequence_no.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        filters = [Conversation.tenant_id == tenant_id]
+        if status:
+            filters.append(Conversation.status == status)
+        if assigned_user_id is not None:
+            filters.append(Conversation.assigned_user_id == assigned_user_id)
+        if search:
+            pattern = f"%{search.strip()}%"
+            filters.append(
+                or_(
+                    Customer.name.like(pattern),
+                    Customer.company_name.like(pattern),
+                    Conversation.subject.like(pattern),
+                )
+            )
+        base = (
+            select(Conversation, Customer, Connector, latest_message)
+            .join(Customer, Customer.id == Conversation.customer_id)
+            .join(CustomerSession, CustomerSession.id == Conversation.customer_session_id)
+            .join(Connector, Connector.id == CustomerSession.connector_id)
+            .where(*filters)
+        )
+        rows = list(
+            (
+                await self.session.execute(
+                    base.order_by(
+                        Conversation.last_message_at.desc(),
+                        Conversation.created_at.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).tuples()
+        )
+        total = int(
+            (
+                await self.session.scalar(
+                    select(func.count(Conversation.id))
+                    .join(Customer, Customer.id == Conversation.customer_id)
+                    .where(*filters)
+                )
+            )
+            or 0
+        )
+        return rows, total
+
+    async def list_messages(
+        self,
+        tenant_id: int,
+        conversation_public_id: str,
+        *,
+        limit: int,
+        before_sequence: int | None,
+    ) -> tuple[list[Message], int]:
+        conversation_id = await self.session.scalar(
+            select(Conversation.id).where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.public_id == conversation_public_id,
+            )
+        )
+        if conversation_id is None:
+            return [], -1
+        filters = [Message.conversation_id == conversation_id]
+        if before_sequence is not None:
+            filters.append(Message.sequence_no < before_sequence)
+        rows = list(
+            (
+                await self.session.scalars(
+                    select(Message)
+                    .where(*filters)
+                    .order_by(Message.sequence_no)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        total = int(
+            (await self.session.scalar(select(func.count(Message.id)).where(*filters))) or 0
+        )
+        return rows, total
 
     async def get_message_by_idempotency(
         self,
@@ -55,3 +189,6 @@ class ConversationRepository:
 
     def add_message(self, message: Message) -> None:
         self.session.add(message)
+
+    def add(self, model: Conversation | CustomerSession) -> None:
+        self.session.add(model)

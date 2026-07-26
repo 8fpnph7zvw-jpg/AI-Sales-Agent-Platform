@@ -23,6 +23,7 @@ x-backend-environment: &backend-environment
   RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-800}
   RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-120}
   RAG_MAX_UPLOAD_BYTES: ${RAG_MAX_UPLOAD_BYTES:-20971520}
+  DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-Admin@2026}
 
 x-service-hardening: &service-hardening
   security_opt:
@@ -122,7 +123,7 @@ services:
       [
         "sh",
         "-c",
-        "alembic -c alembic.ini upgrade head && python scripts/create_admin.py",
+        "alembic -c alembic.ini upgrade head && python scripts/initialize_demo.py",
       ]
     depends_on:
       mysql:

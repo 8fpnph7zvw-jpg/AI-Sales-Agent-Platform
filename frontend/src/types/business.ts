@@ -140,6 +140,20 @@ export interface Quotation {
   created_at: string;
 }
 
+export interface Product {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  unit: string;
+  currency: string;
+  base_price: string;
+  min_order_qty: string | null;
+  status: string;
+  created_at: string;
+}
+
 export interface Connector {
   id: string;
   provider: string;

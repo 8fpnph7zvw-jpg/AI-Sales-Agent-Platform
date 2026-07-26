@@ -13,7 +13,7 @@ from app.models.auth.tenant import Tenant
 from app.models.auth.user import User
 from app.models.auth.user_role import UserRole
 
-TENANT_NAME = "AI Sales Agent Demo"
+TENANT_NAME = "AI Sales Demo"
 TENANT_SLUG = "demo"
 ADMIN_EMAIL = "admin@test.com"
 ADMIN_PASSWORD = "Admin@2026"

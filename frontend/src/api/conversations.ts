@@ -12,6 +12,14 @@ export async function getConversations(params: {
   return data;
 }
 
+export async function createConversation(payload: {
+  customer_id: string;
+  subject?: string;
+}): Promise<Conversation> {
+  const { data } = await apiClient.post<Conversation>("/conversations", payload);
+  return data;
+}
+
 export async function getConversationMessages(
   conversationId: string,
   params: { limit?: number; before_sequence?: number } = {},

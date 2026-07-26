@@ -1,6 +1,6 @@
 import { apiClient } from "./client";
 import type { PageResult } from "@/types/api";
-import type { Quotation, QuotationCreate } from "@/types/business";
+import type { Product, Quotation, QuotationCreate } from "@/types/business";
 
 export async function getQuotations(params: {
   limit: number;
@@ -13,5 +13,13 @@ export async function getQuotations(params: {
 
 export async function createQuotation(payload: QuotationCreate): Promise<Quotation> {
   const { data } = await apiClient.post<Quotation>("/quotation", payload);
+  return data;
+}
+
+export async function getProducts(params: {
+  limit?: number;
+  offset?: number;
+} = {}): Promise<PageResult<Product>> {
+  const { data } = await apiClient.get<PageResult<Product>>("/products", { params });
   return data;
 }

@@ -9,13 +9,19 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/auth/login", "post"),
     ("/api/v1/customers", "get"),
     ("/api/v1/customers", "post"),
+    ("/api/v1/conversations", "get"),
+    ("/api/v1/conversations", "post"),
+    ("/api/v1/conversations/{conversation_id}/messages", "get"),
     ("/api/v1/conversation/message", "post"),
     ("/api/v1/agent/chat", "post"),
     ("/api/v1/lead-score", "post"),
     ("/api/v1/quotation", "post"),
+    ("/api/v1/quotations", "get"),
+    ("/api/v1/products", "get"),
     ("/api/v1/connectors", "get"),
     ("/api/v1/connectors/config", "post"),
     ("/api/v1/notifications/send", "post"),
+    ("/api/v1/workflows", "get"),
 }
 
 

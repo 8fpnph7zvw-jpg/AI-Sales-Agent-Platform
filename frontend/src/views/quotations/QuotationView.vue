@@ -5,10 +5,16 @@ import { ElMessage } from "element-plus";
 
 import { getApiErrorMessage } from "@/api/client";
 import { getCustomers } from "@/api/customers";
-import { createQuotation, getQuotations } from "@/api/quotations";
+import { createQuotation, getProducts, getQuotations } from "@/api/quotations";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
-import type { Customer, Quotation, QuotationCreate, QuotationItemInput } from "@/types/business";
+import type {
+  Customer,
+  Product,
+  Quotation,
+  QuotationCreate,
+  QuotationItemInput,
+} from "@/types/business";
 import { formatDateTime, formatMoney } from "@/utils/format";
 
 const loading = ref(false);
@@ -16,6 +22,7 @@ const saving = ref(false);
 const error = ref("");
 const rows = ref<Quotation[]>([]);
 const customers = ref<Customer[]>([]);
+const products = ref<Product[]>([]);
 const total = ref(0);
 const drawerVisible = ref(false);
 const query = reactive({ page: 1, limit: 20, status: "" });
@@ -42,18 +49,33 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
-    const result = await getQuotations({
-      limit: query.limit,
-      offset: (query.page - 1) * query.limit,
-      status: query.status || undefined,
-    });
+    const [result, productResult] = await Promise.all([
+      getQuotations({
+        limit: query.limit,
+        offset: (query.page - 1) * query.limit,
+        status: query.status || undefined,
+      }),
+      getProducts({ limit: 100, offset: 0 }),
+    ]);
     rows.value = result.data;
     total.value = result.total;
+    products.value = productResult.data;
   } catch (requestError) {
     error.value = getApiErrorMessage(requestError);
   } finally {
     loading.value = false;
   }
+}
+
+function applyProduct(item: QuotationItemInput): void {
+  const product = products.value.find((candidate) => candidate.id === item.product_id);
+  if (!product) return;
+  item.sku = product.sku;
+  item.name = product.name;
+  item.description = product.description || undefined;
+  item.unit = product.unit;
+  item.unit_price = Number(product.base_price);
+  item.quantity = Number(product.min_order_qty || 1);
 }
 
 async function openCreate(): Promise<void> {
@@ -103,6 +125,28 @@ onMounted(load);
       <el-button v-permission="'quotation.create'" type="primary" :icon="Plus" @click="openCreate">创建报价</el-button>
     </PageHeader>
     <el-card shadow="never" class="content-card">
+      <template #header>
+        <div class="card-heading">
+          <div>
+            <strong>产品库</strong>
+            <span>Demo 初始化产品，可直接用于创建报价</span>
+          </div>
+        </div>
+      </template>
+      <el-table :data="products" size="small">
+        <el-table-column prop="sku" label="SKU" min-width="150" />
+        <el-table-column prop="name" label="产品" min-width="200" />
+        <el-table-column prop="category" label="分类" min-width="160" />
+        <el-table-column label="基础价格" width="150">
+          <template #default="{ row }: { row: Product }">
+            {{ formatMoney(row.base_price, row.currency) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="min_order_qty" label="MOQ" width="110" />
+      </el-table>
+    </el-card>
+
+    <el-card shadow="never" class="content-card">
       <div class="filter-bar">
         <el-select v-model="query.status" clearable placeholder="报价状态" @change="load">
           <el-option label="草稿" value="draft" />
@@ -148,7 +192,20 @@ onMounted(load);
         </div>
         <div class="section-heading"><strong>报价明细</strong><el-button text type="primary" :icon="Plus" @click="form.items.push(newItem())">添加项目</el-button></div>
         <div v-for="(item, index) in form.items" :key="index" class="quotation-item">
-          <el-input v-model="item.sku" placeholder="SKU" />
+          <el-select
+            v-model="item.product_id"
+            filterable
+            clearable
+            placeholder="选择产品"
+            @change="applyProduct(item)"
+          >
+            <el-option
+              v-for="product in products"
+              :key="product.id"
+              :label="`${product.name} (${product.sku})`"
+              :value="product.id"
+            />
+          </el-select>
           <el-input v-model="item.name" placeholder="产品名称" />
           <el-input-number v-model="item.quantity" :min="0.0001" :precision="2" />
           <el-input v-model="item.unit" placeholder="单位" />

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation.conversation import Conversation
@@ -50,3 +50,64 @@ class QuotationRepository:
 
     def add(self, quotation: Quotation) -> None:
         self.session.add(quotation)
+
+    async def list_quotations(
+        self,
+        tenant_id: int,
+        *,
+        limit: int,
+        offset: int,
+        status: str | None,
+        created_by: int | None,
+    ) -> tuple[list[tuple[Quotation, Customer]], int]:
+        filters = [Quotation.tenant_id == tenant_id]
+        if status:
+            filters.append(Quotation.status == status)
+        if created_by is not None:
+            filters.append(Quotation.created_by == created_by)
+        base = (
+            select(Quotation, Customer)
+            .join(Customer, Customer.id == Quotation.customer_id)
+            .where(*filters)
+        )
+        rows = list(
+            (
+                await self.session.execute(
+                    base.order_by(Quotation.created_at.desc(), Quotation.id.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).tuples()
+        )
+        total = int(
+            (await self.session.scalar(select(func.count(Quotation.id)).where(*filters))) or 0
+        )
+        return rows, total
+
+    async def list_products(
+        self,
+        tenant_id: int,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[Product], int]:
+        filters = [
+            Product.tenant_id == tenant_id,
+            Product.deleted_at.is_(None),
+            Product.status == "active",
+        ]
+        products = list(
+            (
+                await self.session.scalars(
+                    select(Product)
+                    .where(*filters)
+                    .order_by(Product.name, Product.id)
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).all()
+        )
+        total = int(
+            (await self.session.scalar(select(func.count(Product.id)).where(*filters))) or 0
+        )
+        return products, total
