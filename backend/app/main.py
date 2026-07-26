@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -21,6 +22,13 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format=(
+            "%(asctime)s %(levelname)s %(name)s "
+            "%(message)s"
+        ),
+    )
     application = FastAPI(
         title=settings.app_name,
         version="0.1.0",

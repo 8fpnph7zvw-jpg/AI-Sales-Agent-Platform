@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     dify_api_base_url: str = "https://api.dify.ai/v1"
     dify_api_key: str = ""
     dify_timeout_seconds: float = 30.0
+    whatsapp_graph_api_base_url: str = "https://graph.facebook.com"
+    whatsapp_graph_api_version: str = "v23.0"
+    whatsapp_timeout_seconds: float = 15.0
+    whatsapp_processing_timeout_seconds: int = 60
+    whatsapp_webhook_max_bytes: int = 1_048_576
     config_encryption_key: str = ""
     config_encryption_key_version: str = "v1"
     rag_embedding_dimensions: int = 384

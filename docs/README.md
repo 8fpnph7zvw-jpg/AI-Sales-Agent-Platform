@@ -14,6 +14,8 @@
 6. [数据库实现与迁移方案](./06-database-implementation.md)
 7. [FastAPI 业务层实现](./07-backend-business-api.md)
 8. [云端 Docker Compose 部署](./08-cloud-docker-deployment.md)
+9. [企业级 Demo 初始化](./09-enterprise-demo-initialization.md)
+10. [WhatsApp Business API Connector](./10-whatsapp-business-connector.md)
 
 ## 本阶段关键结论
 

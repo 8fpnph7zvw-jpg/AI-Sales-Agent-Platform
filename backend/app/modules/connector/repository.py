@@ -44,9 +44,10 @@ class ConnectorRepository:
         keys: set[str],
     ) -> dict[str, ConnectorConfig]:
         statement = select(ConnectorConfig).where(
-            ConnectorConfig.connector_id == connector_id,
-            ConnectorConfig.config_key.in_(keys),
+            ConnectorConfig.connector_id == connector_id
         )
+        if keys:
+            statement = statement.where(ConnectorConfig.config_key.in_(keys))
         configs = (await self.session.scalars(statement)).all()
         return {config.config_key: config for config in configs}
 

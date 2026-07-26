@@ -7,8 +7,8 @@ FUTURE_PROVIDER_CATALOG: list[dict[str, Any]] = [
         "key": "whatsapp",
         "name": "WhatsApp Business",
         "category": "messaging",
-        "description": "面向客户会话、模板消息与媒体消息的未来适配器。",
-        "availability": "planned",
+        "description": "WhatsApp Cloud API 客户消息、AI 回复与状态回执适配器。",
+        "availability": "available",
         "capabilities": [
             "receive_messages",
             "send_messages",
@@ -21,6 +21,9 @@ FUTURE_PROVIDER_CATALOG: list[dict[str, Any]] = [
             "fields": [
                 {"key": "business_account_id", "label": "Business Account ID", "type": "text"},
                 {"key": "phone_number_id", "label": "Phone Number ID", "type": "text"},
+                {"key": "access_token", "label": "Access Token", "type": "secret"},
+                {"key": "verify_token", "label": "Verify Token", "type": "secret"},
+                {"key": "app_secret", "label": "Meta App Secret", "type": "secret"},
             ]
         },
     },

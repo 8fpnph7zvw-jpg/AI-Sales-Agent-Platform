@@ -74,6 +74,9 @@ class WhatsAppWebhookPayload(BaseModel):
             if change.value.metadata is not None
         }
 
+    def business_account_ids(self) -> set[str]:
+        return {entry.id for entry in self.entry}
+
 
 class WhatsAppInboundMessage(BaseModel):
     message_id: str

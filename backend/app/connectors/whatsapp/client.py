@@ -20,7 +20,7 @@ from app.connectors.whatsapp.schemas import (
     WhatsAppWebhookPayload,
     parse_inbound_messages,
 )
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.exceptions import ServiceConfigurationError, UpstreamServiceError
 from app.schemas.protocol import (
     Direction,
@@ -38,6 +38,7 @@ REQUIRED_CONFIG_KEYS = (
     "business_account_id",
     "access_token",
     "verify_token",
+    "app_secret",
 )
 SECRET_CONFIG_KEYS = frozenset({"access_token", "verify_token", "app_secret"})
 
@@ -85,7 +86,8 @@ class WhatsAppApiClient:
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
         }
-        for attempt in range(3):
+        max_attempts = 3 if method == "GET" else 1
+        for attempt in range(max_attempts):
             try:
                 async with httpx.AsyncClient(
                     base_url=self.base_url,
@@ -98,13 +100,13 @@ class WhatsAppApiClient:
                         **kwargs,
                     )
                 if response.status_code == 429 or response.status_code >= 500:
-                    if attempt < 2:
+                    if attempt < max_attempts - 1:
                         await asyncio.sleep(0.25 * (2**attempt))
                         continue
                 response.raise_for_status()
                 return response
             except httpx.TimeoutException as exc:
-                if attempt < 2:
+                if attempt < max_attempts - 1:
                     await asyncio.sleep(0.25 * (2**attempt))
                     continue
                 raise UpstreamServiceError("WhatsApp", "request timed out") from exc
@@ -138,11 +140,15 @@ class WhatsAppConnector(BaseConnector):
         }
     )
 
-    def __init__(self, context: ConnectorContext, settings: Settings) -> None:
+    def __init__(
+        self,
+        context: ConnectorContext,
+        settings: Settings | None = None,
+    ) -> None:
         super().__init__(context)
-        self.settings = settings
+        self.settings = settings or get_settings()
         self.client = WhatsAppApiClient(
-            settings,
+            self.settings,
             phone_number_id=str(context.config.get("phone_number_id") or ""),
             access_token=str(context.config.get("access_token") or ""),
         )

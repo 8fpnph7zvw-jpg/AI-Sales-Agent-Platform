@@ -75,7 +75,14 @@ CONNECTORS: tuple[dict[str, Any], ...] = (
     {
         "provider": "whatsapp",
         "name": "WhatsApp",
-        "capabilities": ["messages", "contacts"],
+        "capabilities": [
+            "receive_messages",
+            "send_messages",
+            "text",
+            "media",
+            "delivery_receipts",
+            "webhooks",
+        ],
     },
     {
         "provider": "alibaba",

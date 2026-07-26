@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
+from app.connectors.whatsapp.client import (
+    SECRET_CONFIG_KEYS,
+    WhatsAppConnector,
+)
 from app.core.encryption import ConfigCipher
 from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.models.connector.connector import Connector
@@ -43,6 +48,35 @@ class ConnectorService:
                 "DUPLICATE_CONFIG_KEY",
                 "Connector configuration keys must be unique in one request.",
             )
+        all_existing = await self.repository.get_configs(connector.id, set())
+        effective_values = {
+            key: self.cipher.decrypt(
+                config.value_encrypted,
+                associated_data=f"{principal.tenant_id}:{connector.id}:{key}",
+            )
+            for key, config in all_existing.items()
+            if config.value_encrypted is not None
+        }
+        effective_values.update({item.key: item.value for item in payload.values})
+        if connector.provider == "whatsapp":
+            allowed_keys = {
+                "phone_number_id",
+                "business_account_id",
+                "access_token",
+                "verify_token",
+                "app_secret",
+            }
+            if unsupported := set(keys) - allowed_keys:
+                raise ConflictError(
+                    "WHATSAPP_CONFIG_KEY_UNSUPPORTED",
+                    f"Unsupported WhatsApp configuration key: {sorted(unsupported)[0]}",
+                )
+            if errors := WhatsAppConnector.validate_config(effective_values):
+                raise ConflictError(
+                    "WHATSAPP_CONFIG_INCOMPLETE",
+                    "; ".join(errors),
+                )
+
         existing = await self.repository.get_configs(connector.id, set(keys))
         for item in payload.values:
             config = existing.get(item.key)
@@ -61,10 +95,29 @@ class ConnectorService:
             )
             config.secret_ref = None
             config.key_version = self.cipher.key_version
-            config.is_secret = item.is_secret
+            config.is_secret = (
+                True
+                if connector.provider == "whatsapp" and item.key in SECRET_CONFIG_KEYS
+                else item.is_secret
+            )
             config.updated_by = principal.user_id
 
-        await self.session.commit()
+        if connector.provider == "whatsapp":
+            connector.external_account_id = str(effective_values["phone_number_id"]).strip()
+            connector.status = "draft"
+            connector.health_status = None
+            connector.health_detail = {
+                "message": "Configuration saved; connection test required."
+            }
+            connector.last_health_check_at = None
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ConflictError(
+                "CONNECTOR_ACCOUNT_ALREADY_CONFIGURED",
+                "This provider account is already configured for the tenant.",
+            ) from exc
         return ConnectorConfigResponse(
             connector_id=connector.public_id,
             configured_keys=sorted(keys),
