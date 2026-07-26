@@ -5,6 +5,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.connector.router import router as connector_router
 from app.modules.conversation.router import router as conversation_router
 from app.modules.customer.router import router as customer_router
+from app.modules.knowledge.router import router as knowledge_router
 from app.modules.lead_score.router import router as lead_score_router
 from app.modules.notification.router import router as notification_router
 from app.modules.quotation.router import router as quotation_router
@@ -18,3 +19,4 @@ api_router.include_router(lead_score_router)
 api_router.include_router(quotation_router)
 api_router.include_router(connector_router)
 api_router.include_router(notification_router)
+api_router.include_router(knowledge_router)

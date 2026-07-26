@@ -20,8 +20,10 @@ from app.models.notification.notification import Notification
 from app.models.quotation.product import Product
 from app.models.quotation.quotation import Quotation
 from app.models.quotation.quotation_item import QuotationItem
+from app.models.rag.embedding import Embedding
 from app.models.rag.knowledge_chunk import KnowledgeChunk
 from app.models.rag.knowledge_collection import KnowledgeCollection
+from app.models.rag.knowledge_document import KnowledgeDocument
 from app.models.rag.knowledge_file import KnowledgeFile
 from app.models.system.audit_log import AuditLog
 from app.models.system.outbox_event import OutboxEvent
@@ -38,8 +40,10 @@ __all__ = [
     "Conversation",
     "Customer",
     "CustomerSession",
+    "Embedding",
     "KnowledgeChunk",
     "KnowledgeCollection",
+    "KnowledgeDocument",
     "KnowledgeFile",
     "Message",
     "Notification",

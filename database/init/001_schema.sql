@@ -491,11 +491,42 @@ CREATE TABLE knowledge_files (
     INDEX ix_knowledge_files_uploaded_by (uploaded_by)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE knowledge_documents (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    public_id CHAR(26) NOT NULL,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    collection_id BIGINT UNSIGNED NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(160) NOT NULL,
+    size_bytes BIGINT UNSIGNED NOT NULL,
+    sha256 CHAR(64) NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'processing',
+    chunk_count INT UNSIGNED NOT NULL DEFAULT 0,
+    error_message VARCHAR(1000) NULL,
+    uploaded_by BIGINT UNSIGNED NULL,
+    processed_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT pk_knowledge_documents PRIMARY KEY (id),
+    CONSTRAINT uq_knowledge_documents_public_id UNIQUE (public_id),
+    CONSTRAINT fk_knowledge_documents_tenant_id_tenants
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+    CONSTRAINT fk_knowledge_documents_collection_id_knowledge_collections
+        FOREIGN KEY (collection_id) REFERENCES knowledge_collections (id) ON DELETE CASCADE,
+    CONSTRAINT fk_knowledge_documents_uploaded_by_users
+        FOREIGN KEY (uploaded_by) REFERENCES users (id) ON DELETE SET NULL,
+    INDEX ix_knowledge_documents_tenant_status (tenant_id, status),
+    INDEX ix_knowledge_documents_tenant_hash (tenant_id, sha256),
+    INDEX ix_knowledge_documents_collection_id (collection_id),
+    INDEX ix_knowledge_documents_uploaded_by (uploaded_by)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE knowledge_chunks (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     public_id CHAR(26) NOT NULL,
     tenant_id BIGINT UNSIGNED NOT NULL,
-    knowledge_file_id BIGINT UNSIGNED NOT NULL,
+    knowledge_file_id BIGINT UNSIGNED NULL,
+    document_id BIGINT UNSIGNED NULL,
     chunk_index INT UNSIGNED NOT NULL,
     content_text MEDIUMTEXT NOT NULL,
     content_hash CHAR(64) NOT NULL,
@@ -508,11 +539,35 @@ CREATE TABLE knowledge_chunks (
     CONSTRAINT pk_knowledge_chunks PRIMARY KEY (id),
     CONSTRAINT uq_knowledge_chunks_public_id UNIQUE (public_id),
     CONSTRAINT file_chunk_index UNIQUE (knowledge_file_id, chunk_index),
+    CONSTRAINT document_chunk_index UNIQUE (document_id, chunk_index),
     CONSTRAINT fk_knowledge_chunks_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
     CONSTRAINT fk_knowledge_chunks_knowledge_file_id_knowledge_files
         FOREIGN KEY (knowledge_file_id) REFERENCES knowledge_files (id) ON DELETE CASCADE,
+    CONSTRAINT fk_knowledge_chunks_document_id_knowledge_documents
+        FOREIGN KEY (document_id) REFERENCES knowledge_documents (id) ON DELETE CASCADE,
     INDEX ix_knowledge_chunks_tenant_id (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE embeddings (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    public_id CHAR(26) NOT NULL,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    chunk_id BIGINT UNSIGNED NOT NULL,
+    model VARCHAR(120) NOT NULL,
+    dimensions INT UNSIGNED NOT NULL,
+    vector JSON NOT NULL,
+    metadata JSON NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT pk_embeddings PRIMARY KEY (id),
+    CONSTRAINT uq_embeddings_public_id UNIQUE (public_id),
+    CONSTRAINT uq_embeddings_chunk_id UNIQUE (chunk_id),
+    CONSTRAINT fk_embeddings_tenant_id_tenants
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+    CONSTRAINT fk_embeddings_chunk_id_knowledge_chunks
+        FOREIGN KEY (chunk_id) REFERENCES knowledge_chunks (id) ON DELETE CASCADE,
+    INDEX ix_embeddings_tenant_model (tenant_id, model)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE products (
@@ -800,4 +855,3 @@ CREATE TABLE outbox_events (
     INDEX ix_outbox_events_aggregate
         (tenant_id, aggregate_type, aggregate_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-

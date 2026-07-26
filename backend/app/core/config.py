@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     dify_timeout_seconds: float = 30.0
     config_encryption_key: str = ""
     config_encryption_key_version: str = "v1"
+    rag_embedding_dimensions: int = 384
+    rag_chunk_size: int = 800
+    rag_chunk_overlap: int = 120
+    rag_max_upload_bytes: int = 20 * 1024 * 1024
+    chroma_url: str = "http://chroma:8000"
+    chroma_collection: str = "ai_sales_knowledge"
+    chroma_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),

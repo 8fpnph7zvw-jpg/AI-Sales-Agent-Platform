@@ -66,7 +66,7 @@ onMounted(load);
 
 <template>
   <div>
-    <PageHeader title="知识库" description="管理供 Dify Agent 检索的企业知识文件">
+    <PageHeader title="RAG 知识库" description="上传、解析、切片并向量化企业 PDF、Word 和 Excel 文档">
       <el-button v-permission="'knowledge.upload'" type="primary" :icon="DocumentAdd" @click="uploadVisible = true">
         上传文件
       </el-button>
@@ -101,10 +101,10 @@ onMounted(load);
         <el-form-item label="知识集合 ID（可选）">
           <el-input v-model="collectionId" placeholder="目标知识集合 public_id" />
         </el-form-item>
-        <el-upload drag :auto-upload="false" :limit="1" :on-change="selectFile" accept=".pdf,.doc,.docx,.txt,.md,.csv">
+        <el-upload drag :auto-upload="false" :limit="1" :on-change="selectFile" accept=".pdf,.docx,.xlsx,.xlsm">
           <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
           <div class="el-upload__text">拖放文件到这里，或<em>点击选择</em></div>
-          <template #tip><div class="el-upload__tip">文件大小限制由服务端统一控制</div></template>
+          <template #tip><div class="el-upload__tip">支持 PDF、Word (.docx) 和 Excel (.xlsx/.xlsm)，最大 20 MB</div></template>
         </el-upload>
       </el-form>
       <template #footer>

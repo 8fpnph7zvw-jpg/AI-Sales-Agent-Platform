@@ -16,6 +16,13 @@ x-backend-environment: &backend-environment
   DIFY_TIMEOUT_SECONDS: ${DIFY_TIMEOUT_SECONDS:-30}
   CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?Set CONFIG_ENCRYPTION_KEY in .env}
   CONFIG_ENCRYPTION_KEY_VERSION: ${CONFIG_ENCRYPTION_KEY_VERSION:-v1}
+  CHROMA_URL: ${CHROMA_URL:-http://chroma:8000}
+  CHROMA_COLLECTION: ${CHROMA_COLLECTION:-ai_sales_knowledge}
+  CHROMA_ENABLED: ${CHROMA_ENABLED:-true}
+  RAG_EMBEDDING_DIMENSIONS: ${RAG_EMBEDDING_DIMENSIONS:-384}
+  RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-800}
+  RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-120}
+  RAG_MAX_UPLOAD_BYTES: ${RAG_MAX_UPLOAD_BYTES:-20971520}
 
 x-service-hardening: &service-hardening
   security_opt:
@@ -88,6 +95,23 @@ services:
     networks:
       - data_net
 
+  chroma:
+    <<: *service-hardening
+    image: chromadb/chroma:0.5.23
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes:
+      - chroma_data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    networks:
+      - data_net
+
   migration:
     build:
       context: .
@@ -134,6 +158,8 @@ services:
       migration:
         condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      chroma:
         condition: service_healthy
     read_only: true
     tmpfs:
@@ -183,6 +209,7 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  chroma_data:
 
 networks:
   edge_net:

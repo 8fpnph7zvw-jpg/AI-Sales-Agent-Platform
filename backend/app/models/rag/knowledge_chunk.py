@@ -19,6 +19,7 @@ class KnowledgeChunk(BigIntPrimaryKeyMixin, PublicIdMixin, TimestampMixin, Base)
     __tablename__ = "knowledge_chunks"
     __table_args__ = (
         UniqueConstraint("knowledge_file_id", "chunk_index", name="file_chunk_index"),
+        UniqueConstraint("document_id", "chunk_index", name="document_chunk_index"),
     )
 
     tenant_id: Mapped[int] = mapped_column(
@@ -26,10 +27,14 @@ class KnowledgeChunk(BigIntPrimaryKeyMixin, PublicIdMixin, TimestampMixin, Base)
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
     )
-    knowledge_file_id: Mapped[int] = mapped_column(
+    knowledge_file_id: Mapped[int | None] = mapped_column(
         BIGINT_UNSIGNED,
         ForeignKey("knowledge_files.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    document_id: Mapped[int | None] = mapped_column(
+        BIGINT_UNSIGNED,
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"),
     )
     chunk_index: Mapped[int] = mapped_column(mysql.INTEGER(unsigned=True), nullable=False)
     content_text: Mapped[str] = mapped_column(mysql.MEDIUMTEXT, nullable=False)
@@ -42,3 +47,7 @@ class KnowledgeChunk(BigIntPrimaryKeyMixin, PublicIdMixin, TimestampMixin, Base)
     )
 
     knowledge_file = relationship("KnowledgeFile", back_populates="chunks")
+    document = relationship("KnowledgeDocument", back_populates="chunks")
+    embedding = relationship(
+        "Embedding", back_populates="chunk", uselist=False, cascade="all, delete-orphan"
+    )

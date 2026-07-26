@@ -8,9 +8,10 @@ FastAPI 核心业务层和 Docker Compose 云端部署配置。
 - MySQL 8.0 / `utf8mb4`
 - SQLAlchemy 2.x Async ORM（应用使用 `asyncmy`）
 - Alembic（迁移使用 `PyMySQL`）
-- 28 张企业级多租户数据表
+- 30 张企业级多租户数据表，包含 RAG 文档、切片和 Embedding 持久化
 - RBAC、客户、聊天、Dify AI 运行、RAG、Connector、Workflow、报价、通知、审计和 Outbox
 - Router → Service → Repository 分层 REST API
+- RAG V3：PDF/Word/Excel 解析、文本切片、本地 Embedding、Chroma 同步和租户隔离检索
 
 入口文档：
 
