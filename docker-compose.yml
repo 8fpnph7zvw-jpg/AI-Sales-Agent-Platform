@@ -118,7 +118,12 @@ services:
       dockerfile: backend/Dockerfile
     image: ai-sales-agent-backend:${IMAGE_TAG:-local}
     environment: *backend-environment
-    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic -c alembic.ini upgrade head && python scripts/create_admin.py",
+      ]
     depends_on:
       mysql:
         condition: service_healthy

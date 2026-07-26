@@ -35,6 +35,7 @@ WORKDIR /app/backend
 
 COPY --chown=app:app backend/alembic.ini ./alembic.ini
 COPY --chown=app:app backend/alembic ./alembic
+COPY --chown=app:app backend/scripts ./scripts
 COPY --chown=app:app database /app/database
 
 USER app
