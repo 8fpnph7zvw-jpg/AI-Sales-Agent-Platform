@@ -18,8 +18,9 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@vue/tsconfig": "^0.7.0",
+    "@types/node": "^22.20.1",
     "@vitejs/plugin-vue": "^5.2.3",
+    "@vue/tsconfig": "^0.7.0",
     "sass": "^1.86.0",
     "typescript": "~5.7.2",
     "vite": "^6.2.4",
