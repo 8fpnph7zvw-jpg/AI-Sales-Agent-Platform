@@ -2,6 +2,7 @@ import axios, { AxiosError } from "axios";
 
 import type { ApiErrorBody } from "@/types/api";
 import { clearAuthSession, readAuthSession } from "@/utils/auth-storage";
+import { createUuid } from "@/utils/uuid";
 
 export const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/api/v1",
@@ -16,7 +17,7 @@ apiClient.interceptors.request.use((config) => {
   if (session) {
     config.headers.Authorization = `Bearer ${session.token}`;
   }
-  config.headers["X-Request-ID"] = crypto.randomUUID();
+  config.headers["X-Request-ID"] = createUuid();
   return config;
 });
 

@@ -13,6 +13,7 @@ import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import type { Conversation, Message } from "@/types/business";
 import { formatDateTime } from "@/utils/format";
+import { createUuid } from "@/utils/uuid";
 
 const loading = ref(false);
 const messageLoading = ref(false);
@@ -65,7 +66,7 @@ async function send(): Promise<void> {
       conversation_id: selected.value.id,
       content: messageText.value.trim(),
       message_type: "text",
-      idempotency_key: crypto.randomUUID(),
+      idempotency_key: createUuid(),
     });
     messages.value.push(message);
     messageText.value = "";

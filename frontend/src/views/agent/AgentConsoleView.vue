@@ -7,6 +7,7 @@ import { chatWithAgent } from "@/api/agent";
 import { getApiErrorMessage } from "@/api/client";
 import PageHeader from "@/components/common/PageHeader.vue";
 import type { AgentChatResult } from "@/types/business";
+import { createUuid } from "@/utils/uuid";
 
 const formRef = ref<FormInstance>();
 const submitting = ref(false);
@@ -31,7 +32,7 @@ async function submit(): Promise<void> {
     result.value = await chatWithAgent({
       conversation_id: form.conversation_id,
       query: form.query,
-      idempotency_key: crypto.randomUUID(),
+      idempotency_key: createUuid(),
       inputs: {},
     });
   } catch (error) {
