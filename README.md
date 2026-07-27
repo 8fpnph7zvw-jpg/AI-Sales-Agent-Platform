@@ -27,4 +27,5 @@ FastAPI 核心业务层和 Docker Compose 云端部署配置。
 ## OpenWA WhatsApp 微服务
 
 OpenWA 以 Git submodule 和独立 Docker 服务接入 `services/openwa`。启动、Session
-配对、Webhook 注册和接口测试见 `docs/10-whatsapp-business-connector.md`。
+配对、自动 API Key 初始化和 Webhook 注册见
+`docs/10-whatsapp-business-connector.md`。

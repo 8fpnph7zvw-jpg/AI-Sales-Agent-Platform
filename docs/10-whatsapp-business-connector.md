@@ -20,27 +20,31 @@ WhatsApp
 
 ## 环境变量
 
-复制 `.env.example` 为 `.env`，并至少修改以下值：
+OpenWA 首次启动不需要预先提供 API Key。以下三个值由 `openwa-init`
+自动生成或补全：
 
 ```dotenv
 OPENWA_URL=http://openwa:2785/api
-OPENWA_API_KEY=replace-with-a-strong-openwa-api-key
-OPENWA_SESSION=ai-sales-agent
+OPENWA_API_KEY=
+OPENWA_SESSION=
+OPENWA_SESSION_NAME=ai-sales-agent
 OPENWA_PORT=2785
 OPENWA_ENGINE_TYPE=whatsapp-web.js
 ```
 
-`OPENWA_API_KEY` 同时作为 OpenWA `API_MASTER_KEY` 和 Webhook HMAC secret。
-不要把真实 `.env` 提交到 Git。
+`OPENWA_SESSION_NAME` 是稳定的人类可读名称；`OPENWA_SESSION` 是 OpenWA
+创建后返回的真实 UUID。不要提前填充 `OPENWA_API_KEY` 或使用
+`ALLOW_DEV_API_KEY`、`dev-admin-key`、测试密钥。真实 `.env` 不提交到 Git。
 
 ## 启动
 
 ```bash
 git submodule update --init --recursive
 cp .env.example .env
-# 编辑 .env 中所有必填密码、密钥和 OpenWA 配置
-docker compose up -d --build
-docker compose ps
+# 按现有项目要求配置 MySQL、Redis、JWT 等非 OpenWA 配置。
+# OPENWA_API_KEY 和 OPENWA_SESSION 保持为空。
+docker compose up -d
+docker compose ps -a
 ```
 
 Windows PowerShell 可使用：
@@ -48,52 +52,43 @@ Windows PowerShell 可使用：
 ```powershell
 git submodule update --init --recursive
 Copy-Item .env.example .env
-docker compose up -d --build
+docker compose up -d
+docker compose ps -a
 ```
+
+首次启动顺序：
+
+1. `openwa` 在没有 `API_MASTER_KEY` 的情况下启动。
+2. OpenWA 使用密码学安全随机数生成 `owa_k1_...` 管理密钥，并保存到
+   `/app/data/.api-key`。
+3. 一次性 `openwa-init` 服务读取并调用 `/api/auth/validate` 验证该密钥。
+4. `openwa-init` 查找或创建 `OPENWA_SESSION_NAME` 对应的 Session，取得真实 UUID。
+5. `openwa-init` 自动创建或更新 Backend Webhook，HMAC secret 使用真实密钥。
+6. 密钥和 Session UUID 写入隔离的 `openwa_runtime` 卷，同时安全更新项目 `.env`。
+7. `backend` 等待初始化成功，从运行时卷读取两个值并导出为
+   `OPENWA_API_KEY`、`OPENWA_SESSION` 后启动。
 
 OpenWA Dashboard 和 Swagger：
 
 - Dashboard: `http://127.0.0.1:2785`
 - Swagger: `http://127.0.0.1:2785/api/docs`
 
-## 创建并连接 OpenWA Session
+## 连接 OpenWA Session
 
-以下请求直接访问 OpenWA。`OPENWA_SESSION`、创建 Session 时的 `name`，
-以及平台 Connector 的 `session_id` 必须完全一致。
-
-```bash
-curl -X POST http://127.0.0.1:2785/api/sessions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $OPENWA_API_KEY" \
-  -d '{"name":"ai-sales-agent"}'
-
-curl -X POST http://127.0.0.1:2785/api/sessions/ai-sales-agent/start \
-  -H "X-API-Key: $OPENWA_API_KEY"
-
-curl http://127.0.0.1:2785/api/sessions/ai-sales-agent/qr \
-  -H "X-API-Key: $OPENWA_API_KEY"
-```
-
-扫描 QR 后，Session 状态应变为 `ready`。
+Session 已由 `openwa-init` 自动创建。进入 Dashboard，启动
+`ai-sales-agent` Session 并扫描 QR；状态应变为 `ready`。真实 Session UUID
+已自动写入 `.env` 的 `OPENWA_SESSION`。
 
 ## 注册 Webhook
 
-OpenWA 在 Docker 网络中直接回调 Backend。必须设置 `secret`，其值与
-`OPENWA_API_KEY` 相同；FastAPI 会验证原始请求体上的
-`X-OpenWA-Signature`。
+OpenWA 在 Docker 网络中直接回调 Backend。`openwa-init` 自动注册或更新：
 
-```bash
-curl -X POST http://127.0.0.1:2785/api/sessions/ai-sales-agent/webhooks \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $OPENWA_API_KEY" \
-  -d '{
-    "url":"http://backend:8000/api/v1/webhooks/whatsapp",
-    "events":["message.received"],
-    "secret":"YOUR_OPENWA_API_KEY"
-  }'
-```
+- URL：`http://backend:8000/api/v1/webhooks/whatsapp`
+- Event：`message.received`
+- HMAC secret：自动生成的真实 OpenWA API Key
 
-Compose 已设置 `SSRF_ALLOWED_HOSTS=backend`，允许 OpenWA 注册该内部地址。
+FastAPI 使用运行时注入的同一密钥校验 `X-OpenWA-Signature`。Compose 已设置
+`SSRF_ALLOWED_HOSTS=backend`，不需要手工复制密钥或注册 Webhook。
 
 ## 配置平台 Connector
 
@@ -107,17 +102,13 @@ curl -X POST http://localhost/api/v1/connectors/config \
   -d '{
     "connector_id":"YOUR_CONNECTOR_ID",
     "values":[
-      {"key":"session_id","value":"ai-sales-agent","value_type":"string","is_secret":false}
+      {"key":"session_id","value":"OPENWA_SESSION中的UUID","value_type":"string","is_secret":false}
     ]
   }'
 
-curl -X POST http://localhost/api/v1/connectors/whatsapp/test \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"connector_id":"YOUR_CONNECTOR_ID"}'
 ```
 
-测试成功后 Connector 变为 `active`。Webhook 使用 `sessionId` 定位对应租户，
+在管理后台执行现有连接检查后 Connector 变为 `active`。Webhook 使用 `sessionId` 定位对应租户，
 因此一个 OpenWA Session 只能绑定到一个激活的租户 Connector。
 
 ## 发送消息接口
@@ -139,6 +130,8 @@ curl -X POST http://localhost/api/v1/whatsapp/send \
 
 ```bash
 docker compose logs --tail=200 openwa backend
+docker compose logs --tail=100 openwa-init
+docker compose ps -a
 curl http://127.0.0.1:2785/api/health/ready
 curl http://localhost/health/live
 ```
