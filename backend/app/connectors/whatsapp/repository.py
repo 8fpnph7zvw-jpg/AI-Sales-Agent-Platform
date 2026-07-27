@@ -18,9 +18,9 @@ class WhatsAppRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_connector_by_phone_number(
+    async def get_connector_by_session(
         self,
-        phone_number_id: str,
+        session_id: str,
     ) -> tuple[Connector, Tenant] | None:
         row = (
             await self.session.execute(
@@ -28,7 +28,7 @@ class WhatsAppRepository:
                 .join(Tenant, Tenant.id == Connector.tenant_id)
                 .where(
                     Connector.provider == "whatsapp",
-                    Connector.external_account_id == phone_number_id,
+                    Connector.external_account_id == session_id,
                     Connector.status == "active",
                     Connector.deleted_at.is_(None),
                     Tenant.status == "active",

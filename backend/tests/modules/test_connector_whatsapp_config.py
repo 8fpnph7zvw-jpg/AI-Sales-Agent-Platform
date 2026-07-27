@@ -60,7 +60,7 @@ class FakeSession:
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_access_token_is_encrypted_and_never_returned() -> None:
+async def test_whatsapp_session_is_stored_and_becomes_external_account_id() -> None:
     connector = SimpleNamespace(
         id=10,
         public_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -86,28 +86,8 @@ async def test_whatsapp_access_token_is_encrypted_and_never_returned() -> None:
             "connector_id": connector.public_id,
             "values": [
                 {
-                    "key": "phone_number_id",
-                    "value": "phone-123",
-                    "is_secret": False,
-                },
-                {
-                    "key": "business_account_id",
-                    "value": "waba-123",
-                    "is_secret": False,
-                },
-                {
-                    "key": "access_token",
-                    "value": "server-only-token",
-                    "is_secret": False,
-                },
-                {
-                    "key": "verify_token",
-                    "value": "verify-token",
-                    "is_secret": False,
-                },
-                {
-                    "key": "app_secret",
-                    "value": "app-secret",
+                    "key": "session_id",
+                    "value": "sales-bot",
                     "is_secret": False,
                 },
             ],
@@ -117,11 +97,9 @@ async def test_whatsapp_access_token_is_encrypted_and_never_returned() -> None:
     response = await service.configure(principal, payload)
 
     stored = {config.config_key: config for config in repository.configs}
-    assert stored["access_token"].value_encrypted == b"encrypted"
-    assert stored["access_token"].is_secret is True
-    assert stored["verify_token"].is_secret is True
-    assert stored["app_secret"].is_secret is True
-    assert connector.external_account_id == "phone-123"
+    assert stored["session_id"].value_encrypted == b"encrypted"
+    assert stored["session_id"].is_secret is False
+    assert connector.external_account_id == "sales-bot"
     assert connector.status == "draft"
     assert session.committed is True
-    assert "server-only-token" not in response.model_dump_json()
+    assert "sales-bot" not in response.model_dump_json()

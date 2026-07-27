@@ -23,3 +23,8 @@ FastAPI 核心业务层和 Docker Compose 云端部署配置。
 - `database/README.md`
 
 本仓库仍处于分阶段建设中，前端管理台、Worker 和具体渠道 Adapter 尚未完整生成。
+
+## OpenWA WhatsApp 微服务
+
+OpenWA 以 Git submodule 和独立 Docker 服务接入 `services/openwa`。启动、Session
+配对、Webhook 注册和接口测试见 `docs/10-whatsapp-business-connector.md`。

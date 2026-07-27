@@ -6,82 +6,44 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class WhatsAppText(BaseModel):
-    body: str = Field(min_length=1, max_length=20_000)
+class OpenWAContact(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+    name: str | None = None
+    push_name: str | None = Field(default=None, alias="pushName")
 
 
-class WhatsAppProfile(BaseModel):
-    name: str | None = Field(default=None, max_length=255)
-
-
-class WhatsAppContact(BaseModel):
-    wa_id: str
-    profile: WhatsAppProfile | None = None
-
-
-class WhatsAppMessage(BaseModel):
+class OpenWAMessageData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     id: str
-    from_number: str = Field(alias="from")
-    timestamp: str
-    type: str
-    text: WhatsAppText | None = None
-    image: dict[str, Any] | None = None
-    document: dict[str, Any] | None = None
-    audio: dict[str, Any] | None = None
-    video: dict[str, Any] | None = None
-    sticker: dict[str, Any] | None = None
-    location: dict[str, Any] | None = None
-    button: dict[str, Any] | None = None
-    interactive: dict[str, Any] | None = None
-
-
-class WhatsAppMetadata(BaseModel):
-    display_phone_number: str | None = None
-    phone_number_id: str
-
-
-class WhatsAppChangeValue(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    messaging_product: str | None = None
-    metadata: WhatsAppMetadata | None = None
-    contacts: list[WhatsAppContact] = Field(default_factory=list)
-    messages: list[WhatsAppMessage] = Field(default_factory=list)
-    statuses: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class WhatsAppChange(BaseModel):
-    field: str
-    value: WhatsAppChangeValue
-
-
-class WhatsAppEntry(BaseModel):
-    id: str
-    changes: list[WhatsAppChange] = Field(default_factory=list)
+    from_address: str = Field(alias="from")
+    to: str | None = None
+    body: str | None = None
+    type: str = "text"
+    timestamp: int | float | str | None = None
+    sender_phone: str | None = Field(default=None, alias="senderPhone")
+    contact: OpenWAContact | None = None
+    has_media: bool = Field(default=False, alias="hasMedia")
 
 
 class WhatsAppWebhookPayload(BaseModel):
-    object: str
-    entry: list[WhatsAppEntry] = Field(default_factory=list)
+    model_config = ConfigDict(extra="allow")
 
-    def phone_number_ids(self) -> set[str]:
-        return {
-            change.value.metadata.phone_number_id
-            for entry in self.entry
-            for change in entry.changes
-            if change.value.metadata is not None
-        }
-
-    def business_account_ids(self) -> set[str]:
-        return {entry.id for entry in self.entry}
+    event: str
+    timestamp: datetime | None = None
+    session_id: str = Field(alias="sessionId")
+    idempotency_key: str = Field(alias="idempotencyKey")
+    delivery_id: str = Field(alias="deliveryId")
+    data: OpenWAMessageData | dict[str, Any]
 
 
 class WhatsAppInboundMessage(BaseModel):
     message_id: str
-    phone_number_id: str
+    session_id: str
     from_number: str
+    to_number: str | None
     display_name: str | None
     message_type: str
     text: str
@@ -89,17 +51,14 @@ class WhatsAppInboundMessage(BaseModel):
     provider_content: dict[str, Any]
 
 
-class WhatsAppSendResponse(BaseModel):
-    messaging_product: str | None = None
-    contacts: list[dict[str, Any]] = Field(default_factory=list)
-    messages: list[dict[str, Any]] = Field(default_factory=list)
+class WhatsAppSendRequest(BaseModel):
+    recipient: str = Field(min_length=5, max_length=128)
+    text: str = Field(min_length=1, max_length=4096)
 
-    @property
-    def message_id(self) -> str | None:
-        if not self.messages:
-            return None
-        value = self.messages[0].get("id")
-        return str(value) if value else None
+
+class WhatsAppSendResponse(BaseModel):
+    message_id: str = Field(alias="messageId")
+    timestamp: int | float | str | None = None
 
 
 class WhatsAppTestRequest(BaseModel):
@@ -130,57 +89,52 @@ class WhatsAppWebhookResponse(BaseModel):
 def parse_inbound_messages(
     payload: WhatsAppWebhookPayload,
 ) -> list[WhatsAppInboundMessage]:
-    result: list[WhatsAppInboundMessage] = []
-    for entry in payload.entry:
-        for change in entry.changes:
-            if change.field != "messages" or change.value.metadata is None:
-                continue
-            contacts = {contact.wa_id: contact for contact in change.value.contacts}
-            for message in change.value.messages:
-                contact = contacts.get(message.from_number)
-                result.append(
-                    WhatsAppInboundMessage(
-                        message_id=message.id,
-                        phone_number_id=change.value.metadata.phone_number_id,
-                        from_number=message.from_number,
-                        display_name=contact.profile.name
-                        if contact and contact.profile
-                        else None,
-                        message_type=message.type,
-                        text=_message_text(message),
-                        occurred_at=_timestamp(message.timestamp),
-                        provider_content=_provider_content(message),
-                    )
-                )
-    return result
+    if payload.event != "message.received":
+        return []
+    message = (
+        payload.data
+        if isinstance(payload.data, OpenWAMessageData)
+        else OpenWAMessageData.model_validate(payload.data)
+    )
+    sender = message.sender_phone or message.from_address
+    display_name = None
+    if message.contact is not None:
+        display_name = message.contact.name or message.contact.push_name
+    return [
+        WhatsAppInboundMessage(
+            message_id=message.id,
+            session_id=payload.session_id,
+            from_number=sender,
+            to_number=message.to,
+            display_name=display_name,
+            message_type=message.type,
+            text=_message_text(message),
+            occurred_at=_timestamp(message.timestamp),
+            provider_content=message.model_dump(by_alias=True, exclude_none=True),
+        )
+    ]
 
 
-def _timestamp(value: str) -> datetime:
+def normalize_chat_id(value: str) -> str:
+    candidate = value.strip()
+    if "@" in candidate:
+        return candidate
+    digits = "".join(character for character in candidate if character.isdigit())
+    if not digits:
+        return candidate
+    return f"{digits}@c.us"
+
+
+def _timestamp(value: int | float | str | None) -> datetime:
     try:
-        return datetime.fromtimestamp(int(value), tz=UTC)
-    except (ValueError, OverflowError):
+        if value is None:
+            raise ValueError
+        return datetime.fromtimestamp(float(value), tz=UTC)
+    except (TypeError, ValueError, OverflowError):
         return datetime.now(UTC)
 
 
-def _message_text(message: WhatsAppMessage) -> str:
-    if message.type == "text" and message.text:
-        return message.text.body
-    content = _provider_content(message)
-    caption = content.get("caption")
-    if caption:
-        return f"[WhatsApp {message.type}] {caption}"
-    if message.type == "location":
-        latitude = content.get("latitude")
-        longitude = content.get("longitude")
-        return f"[WhatsApp location] {latitude}, {longitude}"
-    if message.type == "button":
-        return str(content.get("text") or "[WhatsApp button response]")
-    if message.type == "interactive":
-        reply = content.get("button_reply") or content.get("list_reply") or {}
-        return str(reply.get("title") or reply.get("id") or "[WhatsApp interactive response]")
+def _message_text(message: OpenWAMessageData) -> str:
+    if message.body:
+        return message.body
     return f"[WhatsApp {message.type} message]"
-
-
-def _provider_content(message: WhatsAppMessage) -> dict[str, Any]:
-    value = getattr(message, message.type, None)
-    return dict(value) if isinstance(value, dict) else {}

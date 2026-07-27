@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
+from app.connectors.whatsapp.client import OpenWAClient
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     WhatsAppConfigStatusResponse,
+    WhatsAppSendRequest,
+    WhatsAppSendResponse,
     WhatsAppTestRequest,
     WhatsAppTestResponse,
     WhatsAppWebhookPayload,
@@ -26,6 +28,7 @@ from app.integrations.dify.client import DifyClient
 
 webhook_router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"])
 management_router = APIRouter(prefix="/connectors/whatsapp", tags=["WhatsApp Connector"])
+send_router = APIRouter(prefix="/whatsapp", tags=["WhatsApp Connector"])
 
 
 def get_whatsapp_service(
@@ -41,18 +44,9 @@ def get_whatsapp_service(
     )
 
 
-@webhook_router.get("", response_class=PlainTextResponse)
-async def verify_whatsapp_webhook(
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-    hub_mode: Annotated[str | None, Query(alias="hub.mode")] = None,
-    hub_verify_token: Annotated[str | None, Query(alias="hub.verify_token")] = None,
-    hub_challenge: Annotated[str | None, Query(alias="hub.challenge")] = None,
-) -> str:
-    return await service.verify_subscription(
-        mode=hub_mode,
-        verify_token=hub_verify_token,
-        challenge=hub_challenge,
-    )
+@webhook_router.get("")
+async def whatsapp_webhook_status() -> dict[str, str]:
+    return {"status": "ok", "provider": "openwa"}
 
 
 @webhook_router.post("", response_model=WhatsAppWebhookResponse)
@@ -84,6 +78,18 @@ async def receive_whatsapp_webhook(
         payload_dict=payload_dict,
         headers={key.lower(): value for key, value in request.headers.items()},
     )
+
+
+@send_router.post("/send", response_model=WhatsAppSendResponse)
+async def send_whatsapp_message(
+    payload: WhatsAppSendRequest,
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("message.send", "connector.manage")),
+    ],
+) -> WhatsAppSendResponse:
+    del principal
+    return await OpenWAClient(get_settings()).send_text(payload.recipient, payload.text)
 
 
 @management_router.get(

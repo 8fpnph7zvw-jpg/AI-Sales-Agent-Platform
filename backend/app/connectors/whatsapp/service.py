@@ -141,32 +141,6 @@ class WhatsAppService:
             checked_at=result.checked_at,
         )
 
-    async def verify_subscription(
-        self,
-        *,
-        mode: str | None,
-        verify_token: str | None,
-        challenge: str | None,
-    ) -> str:
-        if mode != "subscribe" or not verify_token or challenge is None:
-            raise AppError(403, "WHATSAPP_VERIFICATION_FAILED", "Invalid verification request.")
-        for connector, config in await self.repository.verification_candidates():
-            try:
-                stored = self._decrypt(connector, config)
-            except Exception:
-                logger.warning(
-                    "whatsapp_verify_token_decrypt_failed connector_id=%s",
-                    connector.public_id,
-                )
-                continue
-            if isinstance(stored, str) and hmac.compare_digest(stored, verify_token):
-                logger.info(
-                    "whatsapp_webhook_verified connector_id=%s",
-                    connector.public_id,
-                )
-                return challenge
-        raise AppError(403, "WHATSAPP_VERIFICATION_FAILED", "Verify token did not match.")
-
     async def handle_webhook(
         self,
         *,
@@ -175,40 +149,25 @@ class WhatsAppService:
         payload_dict: dict[str, Any],
         headers: dict[str, str],
     ) -> WhatsAppWebhookResponse:
-        phone_number_ids = payload.phone_number_ids()
-        if not phone_number_ids:
-            return WhatsAppWebhookResponse(status="ignored")
-        if len(phone_number_ids) != 1:
-            raise AppError(
-                422,
-                "WHATSAPP_PHONE_NUMBER_AMBIGUOUS",
-                "Webhook payload must target exactly one phone number.",
-            )
-        phone_number_id = next(iter(phone_number_ids))
-        context = await self.repository.get_connector_by_phone_number(phone_number_id)
-        if context is None:
-            raise ResourceNotFoundError("Active WhatsApp connector")
-        runtime = await self._runtime(*context)
-        configured_account_id = str(runtime.config.get("business_account_id") or "")
-        if configured_account_id not in payload.business_account_ids():
-            raise AppError(
-                403,
-                "WHATSAPP_BUSINESS_ACCOUNT_MISMATCH",
-                "Webhook business account does not match the connector configuration.",
-            )
         try:
             self._verify_signature(
                 raw_body,
-                headers.get("x-hub-signature-256"),
-                runtime.config.get("app_secret"),
+                headers.get("x-openwa-signature"),
+                self.settings.openwa_api_key,
             )
         except AppError:
             logger.warning(
-                "whatsapp_signature_rejected connector_id=%s request_id=%s",
-                runtime.connector.public_id,
+                "openwa_signature_rejected session_id=%s request_id=%s",
+                payload.session_id,
                 headers.get("x-request-id"),
             )
             raise
+        if payload.event != "message.received":
+            return WhatsAppWebhookResponse(status="ignored")
+        context = await self.repository.get_connector_by_session(payload.session_id)
+        if context is None:
+            raise ResourceNotFoundError("Active WhatsApp connector")
+        runtime = await self._runtime(*context)
         envelopes = await runtime.adapter.normalize_inbound(payload_dict, headers)
         response = WhatsAppWebhookResponse()
         for envelope in envelopes:
@@ -230,6 +189,7 @@ class WhatsAppService:
             for config in configs
             if config.value_encrypted is not None
         }
+        values.setdefault("session_id", self.settings.openwa_session)
         adapter = WhatsAppConnector(
             ConnectorContext(
                 tenant_id=tenant.public_id,
@@ -252,17 +212,17 @@ class WhatsAppService:
     def _verify_signature(
         raw_body: bytes,
         signature: str | None,
-        app_secret: Any,
+        webhook_secret: Any,
     ) -> None:
-        if not isinstance(app_secret, str) or not app_secret:
+        if not isinstance(webhook_secret, str) or not webhook_secret:
             raise AppError(
                 503,
-                "WHATSAPP_APP_SECRET_REQUIRED",
-                "WhatsApp app_secret is required for webhook signature validation.",
+                "OPENWA_API_KEY_REQUIRED",
+                "OPENWA_API_KEY is required for webhook signature validation.",
             )
         if not signature or not signature.startswith("sha256="):
             raise AppError(403, "WHATSAPP_SIGNATURE_INVALID", "Webhook signature is missing.")
-        expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        expected = hmac.new(webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature[7:], expected):
             raise AppError(403, "WHATSAPP_SIGNATURE_INVALID", "Webhook signature is invalid.")
 
@@ -293,7 +253,8 @@ class WhatsAppService:
                     "content_type": headers.get("content-type"),
                     "user_agent": headers.get("user-agent"),
                     "request_id": headers.get("x-request-id"),
-                    "signature_present": "x-hub-signature-256" in headers,
+                    "signature_present": "x-openwa-signature" in headers,
+                    "openwa_delivery_id": headers.get("x-openwa-delivery-id"),
                 },
                 payload_redacted={
                     "from": self._redact_phone(envelope.sender.id),
@@ -572,7 +533,7 @@ class WhatsAppService:
             direction=Direction.OUTBOUND,
             message_type=MessageType.TEXT,
             conversation_id=str(outbound.conversation_id),
-            sender=Party(id=str(runtime.config["phone_number_id"])),
+            sender=Party(id=str(runtime.config["session_id"])),
             recipients=[Party(id=customer_session.external_contact_id)],
             content=TextContent(text=outbound.content_text or ""),
         )

@@ -14,6 +14,9 @@ x-backend-environment: &backend-environment
   DIFY_API_BASE_URL: ${DIFY_API_BASE_URL:-https://api.dify.ai/v1}
   DIFY_API_KEY: ${DIFY_API_KEY:-}
   DIFY_TIMEOUT_SECONDS: ${DIFY_TIMEOUT_SECONDS:-30}
+  OPENWA_URL: ${OPENWA_URL:-http://openwa:2785/api}
+  OPENWA_API_KEY: ${OPENWA_API_KEY:?Set OPENWA_API_KEY in .env}
+  OPENWA_SESSION: ${OPENWA_SESSION:-ai-sales-agent}
   WHATSAPP_GRAPH_API_BASE_URL: ${WHATSAPP_GRAPH_API_BASE_URL:-https://graph.facebook.com}
   WHATSAPP_GRAPH_API_VERSION: ${WHATSAPP_GRAPH_API_VERSION:-v23.0}
   WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-15}
@@ -168,6 +171,8 @@ services:
     depends_on:
       migration:
         condition: service_completed_successfully
+      openwa:
+        condition: service_healthy
       redis:
         condition: service_healthy
       chroma:
@@ -178,6 +183,48 @@ services:
     networks:
       - edge_net
       - data_net
+      - connector_net
+
+  openwa:
+    <<: *service-hardening
+    build:
+      context: ./services/openwa
+      dockerfile: Dockerfile
+    image: ai-sales-agent-openwa:${OPENWA_IMAGE_TAG:-local}
+    init: true
+    stop_grace_period: 45s
+    environment:
+      NODE_ENV: production
+      PORT: 2785
+      API_MASTER_KEY: ${OPENWA_API_KEY:?Set OPENWA_API_KEY in .env}
+      AUTO_START_SESSIONS: ${OPENWA_AUTO_START_SESSIONS:-true}
+      ENGINE_TYPE: ${OPENWA_ENGINE_TYPE:-whatsapp-web.js}
+      DATABASE_TYPE: sqlite
+      DATABASE_NAME: /app/data/openwa.sqlite
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/data/media
+      SESSION_DATA_PATH: /app/data/sessions
+      PUPPETEER_HEADLESS: "true"
+      REDIS_ENABLED: "false"
+      SSRF_ALLOWED_HOSTS: backend
+    ports:
+      - "127.0.0.1:${OPENWA_PORT:-2785}:2785"
+    volumes:
+      - openwa_data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:2785/api/health/ready',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    networks:
+      - connector_net
 
   frontend:
     <<: *service-hardening
@@ -221,8 +268,10 @@ volumes:
   mysql_data:
   redis_data:
   chroma_data:
+  openwa_data:
 
 networks:
   edge_net:
+  connector_net:
   data_net:
     internal: true

@@ -1,90 +1,156 @@
-# WhatsApp Business API Connector
+# OpenWA WhatsApp Connector
 
-本 Connector 使用 WhatsApp Cloud API，并复用平台现有的多租户 Connector、
-AES-GCM 配置加密、Customer、Conversation、Message、AI Agent Run 和 WebhookLog
-模型。无需修改数据库结构。
+本项目通过独立的 OpenWA 微服务接入 WhatsApp。OpenWA 源码以 Git submodule
+固定在 `services/openwa`，不复制到 Backend；FastAPI 只通过 HTTP API 与其通信。
 
-## 配置项
-
-在后台“Connector 管理”中配置 WhatsApp：
-
-| 配置 | 用途 | API 是否返回明文 |
-| --- | --- | --- |
-| `phone_number_id` | Cloud API 发信号码 ID、Webhook 租户路由 | 否 |
-| `business_account_id` | 校验 Webhook 所属 WABA | 否 |
-| `access_token` | 调用 Graph API | 否 |
-| `verify_token` | Meta Webhook GET 验证 | 否 |
-| `app_secret` | 校验 POST 的 `X-Hub-Signature-256` | 否 |
-
-`access_token`、`verify_token` 和 `app_secret` 强制作为敏感配置保存。配置状态接口
-只返回已配置的键名，绝不返回值。建议使用具有
-`whatsapp_business_messaging` 权限的长期 System User Token。
-
-保存配置后调用“测试连接”，成功后 Connector 状态才会切换为 `active`：
+## 架构
 
 ```text
-POST /api/v1/connectors/whatsapp/test
-{"connector_id": "<CONNECTOR_PUBLIC_ID>"}
+WhatsApp
+  -> OpenWA
+  -> POST /api/v1/webhooks/whatsapp
+  -> FastAPI（租户、幂等、会话、消息落库）
+  -> Dify Agent / RAG
+  -> OpenWA send-text
+  -> WhatsApp
 ```
 
-## Meta Webhook
+`backend` 和 `openwa` 同时加入 `connector_net`。容器内访问地址为
+`http://openwa:2785/api`，不经过宿主机端口或 Nginx。
 
-Callback URL：
+## 环境变量
 
-```text
-https://YOUR_DOMAIN/api/v1/webhooks/whatsapp
-```
-
-验证和接收共用该地址：
-
-```text
-GET  /api/v1/webhooks/whatsapp
-POST /api/v1/webhooks/whatsapp
-```
-
-GET 使用 Connector 中加密保存的 `verify_token` 返回 challenge。POST 按以下顺序处理：
-
-1. 从 payload 的 `phone_number_id` 定位租户和 active Connector。
-2. 校验 payload 的 WABA ID。
-3. 使用 `app_secret` 验证原始请求体的 HMAC-SHA256 签名。
-4. 以 WhatsApp message ID 做幂等处理并写入脱敏 `WebhookLog`。
-5. 创建或查询 Customer、CustomerSession 和 open Conversation。
-6. 保存 inbound Message 和 `AiAgentRun`。
-7. 调用 Dify，保存 outbound Message。
-8. 调用 `/{phone_number_id}/messages` 发送文本回复并回写 provider message ID。
-
-日志不记录消息正文、Access Token、Verify Token 或 App Secret。
-
-## Docker 配置
-
-`.env` 可配置：
+复制 `.env.example` 为 `.env`，并至少修改以下值：
 
 ```dotenv
-WHATSAPP_GRAPH_API_BASE_URL=https://graph.facebook.com
-WHATSAPP_GRAPH_API_VERSION=v23.0
-WHATSAPP_TIMEOUT_SECONDS=15
-WHATSAPP_PROCESSING_TIMEOUT_SECONDS=60
-WHATSAPP_WEBHOOK_MAX_BYTES=1048576
+OPENWA_URL=http://openwa:2785/api
+OPENWA_API_KEY=replace-with-a-strong-openwa-api-key
+OPENWA_SESSION=ai-sales-agent
+OPENWA_PORT=2785
+OPENWA_ENGINE_TYPE=whatsapp-web.js
 ```
 
-Graph API 版本显式固定，升级前应在测试环境验证。部署：
+`OPENWA_API_KEY` 同时作为 OpenWA `API_MASTER_KEY` 和 Webhook HMAC secret。
+不要把真实 `.env` 提交到 Git。
+
+## 启动
 
 ```bash
+git submodule update --init --recursive
+cp .env.example .env
+# 编辑 .env 中所有必填密码、密钥和 OpenWA 配置
 docker compose up -d --build
-docker compose config
 docker compose ps
-docker compose logs --tail=200 backend
 ```
 
-容器需要能够访问 `graph.facebook.com` 和 Dify API。Nginx 已将 `/api/` 转发到
-Backend，不需要新增公网端口。
+Windows PowerShell 可使用：
 
-## 验收建议
+```powershell
+git submodule update --init --recursive
+Copy-Item .env.example .env
+docker compose up -d --build
+```
 
-1. 后台保存五项配置，确认浏览器 Network 响应中没有任何密钥值。
-2. 测试连接成功，Connector 变为 `active/healthy`。
-3. 在 Meta 控制台完成 Callback URL 和 Verify Token 验证。
-4. 从真实 WhatsApp 号码发送一条测试消息。
-5. 检查客户、会话和两条 Message（inbound/outbound）。
-6. 检查 `webhook_logs` 为 `processed` 且 payload 已脱敏。
-7. 重放相同 webhook，确认不会重复调用 Dify 或重复创建消息。
+OpenWA Dashboard 和 Swagger：
+
+- Dashboard: `http://127.0.0.1:2785`
+- Swagger: `http://127.0.0.1:2785/api/docs`
+
+## 创建并连接 OpenWA Session
+
+以下请求直接访问 OpenWA。`OPENWA_SESSION`、创建 Session 时的 `name`，
+以及平台 Connector 的 `session_id` 必须完全一致。
+
+```bash
+curl -X POST http://127.0.0.1:2785/api/sessions \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $OPENWA_API_KEY" \
+  -d '{"name":"ai-sales-agent"}'
+
+curl -X POST http://127.0.0.1:2785/api/sessions/ai-sales-agent/start \
+  -H "X-API-Key: $OPENWA_API_KEY"
+
+curl http://127.0.0.1:2785/api/sessions/ai-sales-agent/qr \
+  -H "X-API-Key: $OPENWA_API_KEY"
+```
+
+扫描 QR 后，Session 状态应变为 `ready`。
+
+## 注册 Webhook
+
+OpenWA 在 Docker 网络中直接回调 Backend。必须设置 `secret`，其值与
+`OPENWA_API_KEY` 相同；FastAPI 会验证原始请求体上的
+`X-OpenWA-Signature`。
+
+```bash
+curl -X POST http://127.0.0.1:2785/api/sessions/ai-sales-agent/webhooks \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $OPENWA_API_KEY" \
+  -d '{
+    "url":"http://backend:8000/api/v1/webhooks/whatsapp",
+    "events":["message.received"],
+    "secret":"YOUR_OPENWA_API_KEY"
+  }'
+```
+
+Compose 已设置 `SSRF_ALLOWED_HOSTS=backend`，允许 OpenWA 注册该内部地址。
+
+## 配置平台 Connector
+
+在管理后台的 Connector 页面填写 `OpenWA Session ID` 并执行连接测试；
+也可以使用 API：
+
+```bash
+curl -X POST http://localhost/api/v1/connectors/config \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "connector_id":"YOUR_CONNECTOR_ID",
+    "values":[
+      {"key":"session_id","value":"ai-sales-agent","value_type":"string","is_secret":false}
+    ]
+  }'
+
+curl -X POST http://localhost/api/v1/connectors/whatsapp/test \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"connector_id":"YOUR_CONNECTOR_ID"}'
+```
+
+测试成功后 Connector 变为 `active`。Webhook 使用 `sessionId` 定位对应租户，
+因此一个 OpenWA Session 只能绑定到一个激活的租户 Connector。
+
+## 发送消息接口
+
+`POST /api/v1/whatsapp/send` 保留现有 JWT 和权限体系，调用者必须拥有
+`message.send` 或 `connector.manage` 权限。
+
+```bash
+curl -X POST http://localhost/api/v1/whatsapp/send \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"recipient":"15551234567","text":"Hello from AI Sales Agent"}'
+```
+
+手机号会规范化为 OpenWA 所需的 `<digits>@c.us`；也可以直接传入
+`@c.us` 或 `@g.us` Chat ID。
+
+## 验收
+
+```bash
+docker compose logs --tail=200 openwa backend
+curl http://127.0.0.1:2785/api/health/ready
+curl http://localhost/health/live
+```
+
+从真实 WhatsApp 号码向已连接号码发送消息后，应看到：
+
+1. OpenWA 投递 `message.received` Webhook。
+2. FastAPI 验签并按 OpenWA idempotency key 去重。
+3. Customer、CustomerSession、Conversation、Inbound Message 和 WebhookLog 落库。
+4. FastAPI 调用 Dify；Dify 使用现有知识库/RAG 生成回答。
+5. Outbound Message 落库并通过 OpenWA 回复，状态更新为 `sent`。
+
+OpenWA 使用非官方 WhatsApp 客户端，存在账号限制或封禁风险。生产环境应使用
+独立、可承受损失且已获用户同意的号码，并控制发送频率；合规或关键业务优先考虑
+Meta 官方 WhatsApp Cloud API。

@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.connectors.whatsapp.webhook import management_router as whatsapp_management_router
+from app.connectors.whatsapp.webhook import send_router as whatsapp_send_router
 from app.connectors.whatsapp.webhook import webhook_router as whatsapp_webhook_router
 from app.modules.ai_agent.router import router as ai_agent_router
 from app.modules.auth.router import router as auth_router
@@ -28,3 +29,4 @@ api_router.include_router(knowledge_router)
 api_router.include_router(workflow_router)
 api_router.include_router(whatsapp_webhook_router)
 api_router.include_router(whatsapp_management_router)
+api_router.include_router(whatsapp_send_router)

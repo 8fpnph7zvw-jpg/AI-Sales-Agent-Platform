@@ -36,11 +36,7 @@ const genericConfigRows = reactive<GenericConfigRow[]>([
   { key: "", value: "", value_type: "string", is_secret: true },
 ]);
 const whatsappForm = reactive({
-  phone_number_id: "",
-  business_account_id: "",
-  access_token: "",
-  verify_token: "",
-  app_secret: "",
+  session_id: "",
 });
 const isWhatsApp = computed(() => selected.value?.provider === "whatsapp");
 
@@ -61,13 +57,9 @@ async function openConfig(row: Connector): Promise<void> {
   configuredKeys.value = [];
   webhookUrl.value = "";
   Object.assign(whatsappForm, {
-    phone_number_id: row.external_account_id === "demo-template"
+    session_id: row.external_account_id === "demo-template"
       ? ""
       : row.external_account_id,
-    business_account_id: "",
-    access_token: "",
-    verify_token: "",
-    app_secret: "",
   });
   genericConfigRows.splice(
     0,
@@ -107,15 +99,9 @@ async function save(): Promise<void> {
           key,
           value: value.trim(),
           value_type: "string",
-          is_secret: ["access_token", "verify_token", "app_secret"].includes(key),
+          is_secret: false,
         }));
-      const missing = [
-        "phone_number_id",
-        "business_account_id",
-        "access_token",
-        "verify_token",
-        "app_secret",
-      ].filter(
+      const missing = ["session_id"].filter(
         (key) => !isConfigured(key) && !values.some((item) => item.key === key),
       );
       if (missing.length) {
@@ -133,10 +119,7 @@ async function save(): Promise<void> {
       configuredKeys.value = Array.from(
         new Set([...configuredKeys.value, ...result.configured_keys]),
       );
-      whatsappForm.access_token = "";
-      whatsappForm.verify_token = "";
-      whatsappForm.app_secret = "";
-      ElMessage.success("WhatsApp 配置已加密保存，请执行连接测试");
+      ElMessage.success("OpenWA Session 配置已保存，请执行连接测试");
     } else {
       if (genericConfigRows.some((item) => !item.key || !item.value)) {
         ElMessage.warning("请填写配置键和值");
@@ -241,7 +224,7 @@ onMounted(load);
       destroy-on-close
     >
       <el-alert
-        title="凭据只会提交到后端加密保存；Access Token、Verify Token 和 App Secret 不会从 API 返回。"
+        title="OpenWA URL 和 API Key 由服务端环境变量管理；这里只配置租户使用的 OpenWA Session。"
         type="info"
         show-icon
         :closable="false"
@@ -254,40 +237,10 @@ onMounted(load);
         label-position="top"
         class="connector-config-form"
       >
-        <el-form-item label="Phone Number ID" required>
+        <el-form-item label="OpenWA Session ID" required>
           <el-input
-            v-model="whatsappForm.phone_number_id"
-            :placeholder="configuredPlaceholder('phone_number_id', 'Meta Phone Number ID')"
-          />
-        </el-form-item>
-        <el-form-item label="Business Account ID" required>
-          <el-input
-            v-model="whatsappForm.business_account_id"
-            :placeholder="configuredPlaceholder('business_account_id', 'WhatsApp Business Account ID')"
-          />
-        </el-form-item>
-        <el-form-item label="Access Token" required>
-          <el-input
-            v-model="whatsappForm.access_token"
-            type="password"
-            autocomplete="new-password"
-            :placeholder="configuredPlaceholder('access_token', '永久 System User Access Token')"
-          />
-        </el-form-item>
-        <el-form-item label="Verify Token" required>
-          <el-input
-            v-model="whatsappForm.verify_token"
-            type="password"
-            autocomplete="new-password"
-            :placeholder="configuredPlaceholder('verify_token', '自定义 Webhook Verify Token')"
-          />
-        </el-form-item>
-        <el-form-item label="Meta App Secret（POST Webhook 验签）" required>
-          <el-input
-            v-model="whatsappForm.app_secret"
-            type="password"
-            autocomplete="new-password"
-            :placeholder="configuredPlaceholder('app_secret', 'Meta App Secret')"
+            v-model="whatsappForm.session_id"
+            :placeholder="configuredPlaceholder('session_id', '例如 ai-sales-agent')"
           />
         </el-form-item>
         <el-form-item label="Webhook URL">
