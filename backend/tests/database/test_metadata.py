@@ -26,7 +26,7 @@ def _sql_tables() -> dict[str, str]:
 
 def test_schema_sql_and_orm_contain_the_same_tables() -> None:
     assert set(_sql_tables()) == set(Base.metadata.tables)
-    assert len(Base.metadata.tables) == 30
+    assert len(Base.metadata.tables) == 31
 
 
 def test_schema_sql_and_orm_contain_the_same_columns() -> None:

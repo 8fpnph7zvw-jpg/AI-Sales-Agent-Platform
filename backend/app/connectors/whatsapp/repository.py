@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai.ai_agent_run import AiAgentRun
@@ -8,6 +8,7 @@ from app.models.auth.tenant import Tenant
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
+from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
@@ -26,9 +27,16 @@ class WhatsAppRepository:
             await self.session.execute(
                 select(Connector, Tenant)
                 .join(Tenant, Tenant.id == Connector.tenant_id)
+                .join(
+                    WhatsAppSession,
+                    WhatsAppSession.connector_id == Connector.id,
+                )
                 .where(
                     Connector.provider == "whatsapp",
-                    Connector.external_account_id == session_id,
+                    or_(
+                        WhatsAppSession.session_id == session_id,
+                        WhatsAppSession.session_name == session_id,
+                    ),
                     Connector.status == "active",
                     Connector.deleted_at.is_(None),
                     Tenant.status == "active",
@@ -39,6 +47,72 @@ class WhatsAppRepository:
             )
         ).one_or_none()
         return (row[0], row[1]) if row else None
+
+    async def get_management_context(
+        self,
+        tenant_id: int,
+        *,
+        for_update: bool = False,
+    ) -> tuple[Connector, Tenant] | None:
+        statement = (
+            select(Connector, Tenant)
+            .join(Tenant, Tenant.id == Connector.tenant_id)
+            .where(
+                Connector.tenant_id == tenant_id,
+                Connector.provider == "whatsapp",
+                Connector.deleted_at.is_(None),
+                Tenant.status == "active",
+                Tenant.deleted_at.is_(None),
+            )
+            .order_by(
+                case(
+                    (Connector.status == "active", 0),
+                    (Connector.status == "draft", 1),
+                    else_=2,
+                ),
+                Connector.id,
+            )
+            .limit(1)
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = (await self.session.execute(statement)).one_or_none()
+        return (row[0], row[1]) if row else None
+
+    async def get_whatsapp_session(
+        self,
+        tenant_id: int,
+        connector_id: int,
+        *,
+        for_update: bool = False,
+    ) -> WhatsAppSession | None:
+        statement = select(WhatsAppSession).where(
+            WhatsAppSession.tenant_id == tenant_id,
+            WhatsAppSession.connector_id == connector_id,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return await self.session.scalar(statement)
+
+    def add_whatsapp_session(self, whatsapp_session: WhatsAppSession) -> None:
+        self.session.add(whatsapp_session)
+
+    async def get_session_claim(
+        self,
+        *,
+        session_name: str,
+        session_id: str | None = None,
+        exclude_connector_id: int | None = None,
+    ) -> WhatsAppSession | None:
+        identities = [WhatsAppSession.session_name == session_name]
+        if session_id:
+            identities.append(WhatsAppSession.session_id == session_id)
+        statement = select(WhatsAppSession).where(or_(*identities))
+        if exclude_connector_id is not None:
+            statement = statement.where(
+                WhatsAppSession.connector_id != exclude_connector_id
+            )
+        return await self.session.scalar(statement.limit(1))
 
     async def get_connector_for_update(
         self,

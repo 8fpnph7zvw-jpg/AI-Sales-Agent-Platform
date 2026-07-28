@@ -45,6 +45,20 @@ UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+STARTABLE_OPENWA_STATUSES = {"created", "disconnected", "failed"}
+OPENWA_STATUS_MAP = {
+    "created": "created",
+    "starting": "starting",
+    "initializing": "starting",
+    "authenticating": "starting",
+    "qr": "waiting_qr",
+    "qr_ready": "waiting_qr",
+    "ready": "connected",
+    "connected": "connected",
+    "disconnected": "disconnected",
+    "failed": "error",
+    "error": "error",
+}
 
 
 class OpenWAClient:
@@ -53,21 +67,30 @@ class OpenWAClient:
         settings: Settings,
         *,
         session_id: str | None = None,
+        session_name: str | None = None,
     ) -> None:
         self.base_url = settings.openwa_url.rstrip("/") + "/"
         self.api_key = settings.openwa_api_key
-        self.session_id = self._resolve_session_name(
-            session_id,
+        self.session_id = (
+            str(session_id).strip()
+            if session_id and UUID_PATTERN.fullmatch(str(session_id).strip())
+            else None
+        )
+        self.session_name = self._resolve_session_name(
+            session_name or (session_id if self.session_id is None else None),
             settings.openwa_session_name,
         )
         self.timeout = settings.whatsapp_timeout_seconds
 
     async def test_connection(self) -> dict[str, Any]:
-        response = await self._request("GET", f"sessions/{self.session_id}")
-        return dict(response.json())
+        value = await self._find_session()
+        return value or {
+            "name": self.session_name,
+            "status": "disconnected",
+        }
 
     async def session_status(self) -> OpenWASessionStatusResponse:
-        if not self.api_key or not self.session_id:
+        if not self.api_key:
             return OpenWASessionStatusResponse(
                 status="disconnected",
                 api_key_configured=bool(self.api_key),
@@ -82,7 +105,7 @@ class OpenWAClient:
 
     async def create_session(self, name: str | None = None) -> OpenWASessionStatusResponse:
         if name is not None:
-            self.session_id = self._resolve_session_name(name, self.session_id)
+            self.session_name = self._resolve_session_name(name, self.session_name)
         return await self.ensure_session_started()
 
     async def ensure_session_started(self) -> OpenWASessionStatusResponse:
@@ -92,63 +115,114 @@ class OpenWAClient:
                 "POST",
                 "sessions",
                 allowed_statuses={409},
-                json={"name": self.session_id},
+                json={"name": self.session_name},
+            )
+            logger.info(
+                "OpenWA API: create session name=%s status=%s",
+                self.session_name,
+                response.status_code,
             )
             if response.status_code == 409:
                 value = await self._find_session()
                 if value is None:
                     raise UpstreamServiceError(
                         "OpenWA",
-                        f"session {self.session_id} already exists but cannot be read",
+                        f"session {self.session_name} already exists but cannot be read",
                     )
             else:
                 value = dict(response.json())
+        self._capture_identity(value)
 
-        response = await self._request(
-            "POST",
-            f"sessions/{self.session_id}/start",
-            allowed_statuses={400, 409},
-        )
-        if response.status_code not in {400, 409}:
-            value = dict(response.json())
-        else:
-            current = await self._find_session()
-            if current is not None:
-                value = current
+        upstream_status = str(value.get("status") or "created").lower()
+        if upstream_status in STARTABLE_OPENWA_STATUSES:
+            response = await self._request(
+                "POST",
+                f"sessions/{self._required_session_id()}/start",
+                allowed_statuses={400, 409},
+            )
+            logger.info(
+                "OpenWA API: start session id=%s status=%s",
+                self.session_id,
+                response.status_code,
+            )
+            if response.status_code not in {400, 409}:
+                value = dict(response.json())
+            else:
+                current = await self._refresh_session()
+                if current is not None:
+                    value = current
+            self._capture_identity(value)
         return self._session_response(value)
 
     async def qrcode(self) -> OpenWAQRCodeResponse:
-        await self.ensure_session_started()
-        attempts = max(1, min(30, int(self.timeout * 2)))
-        for attempt in range(attempts):
-            response = await self._request(
-                "GET",
-                f"sessions/{self.session_id}/qr",
-                allowed_statuses={400, 404, 409},
+        session = await self.ensure_session_started()
+        if session.status == "connected":
+            return OpenWAQRCodeResponse(
+                session_id=self._required_session_id(),
+                status="connected",
+                message="WhatsApp is already connected; no QR code is required.",
             )
-            if response.status_code < 400:
-                value = dict(response.json())
-                data_url = value.get("dataUrl") or value.get("qrCode")
-                if data_url:
-                    return OpenWAQRCodeResponse(
-                        session_id=self.session_id,
-                        status=str(value.get("status") or "qr"),
-                        data_url=str(data_url),
-                    )
+
+        attempts = max(2, min(12, int(self.timeout)))
+        for attempt in range(attempts):
+            current = await self._refresh_session()
+            if current is None:
+                break
+            mapped_status = self.normalize_status(current.get("status"))
+            if mapped_status == "connected":
+                return OpenWAQRCodeResponse(
+                    session_id=self._required_session_id(),
+                    status="connected",
+                    message="WhatsApp connected while waiting for the QR code.",
+                )
+            if mapped_status == "waiting_qr":
+                response = await self._request(
+                    "GET",
+                    f"sessions/{self._required_session_id()}/qr",
+                    allowed_statuses={400, 404, 409},
+                )
+                logger.info(
+                    "OpenWA API: get qr session_id=%s status=%s",
+                    self.session_id,
+                    response.status_code,
+                )
+                if response.status_code < 400:
+                    value = dict(response.json())
+                    data_url = value.get("dataUrl") or value.get("qrCode")
+                    if not data_url:
+                        data_url = value.get("qr")
+                    if data_url:
+                        return OpenWAQRCodeResponse(
+                            session_id=self._required_session_id(),
+                            status="waiting_qr",
+                            data_url=str(data_url),
+                            message="Scan the QR code with WhatsApp.",
+                        )
             if attempt < attempts - 1:
                 await asyncio.sleep(0.5)
-        raise UpstreamServiceError(
-            "OpenWA",
-            f"QR code for session {self.session_id} is not ready",
+
+        latest = await self.session_status()
+        return OpenWAQRCodeResponse(
+            session_id=latest.session_id or self.session_name,
+            status=latest.status,
+            message=(
+                "OpenWA is still starting. The QR code is not ready yet; please retry shortly."
+                if latest.status in {"created", "starting"}
+                else "No QR code is currently available."
+            ),
         )
 
     async def delete_session(self) -> OpenWASessionStatusResponse:
-        await self._request(
-            "DELETE",
-            f"sessions/{self.session_id}",
-            allowed_statuses={404},
-        )
+        value = await self._find_session()
+        if value is not None:
+            await self._request(
+                "DELETE",
+                f"sessions/{self._required_session_id()}",
+                allowed_statuses={404},
+            )
+        self.session_id = None
         return OpenWASessionStatusResponse(
+            name=self.session_name,
             status="disconnected",
             api_key_configured=bool(self.api_key),
         )
@@ -158,31 +232,97 @@ class OpenWAClient:
         return await self.ensure_session_started()
 
     async def send_text(self, recipient: str, text: str) -> WhatsAppSendResponse:
+        value = await self._find_session()
+        if value is None:
+            raise UpstreamServiceError(
+                "OpenWA",
+                f"session {self.session_name} does not exist",
+            )
         response = await self._request(
             "POST",
-            f"sessions/{self.session_id}/messages/send-text",
+            f"sessions/{self._required_session_id()}/messages/send-text",
             json={"chatId": normalize_chat_id(recipient), "text": text},
         )
         return WhatsAppSendResponse.model_validate(response.json())
 
+    async def _list_sessions(self) -> list[dict[str, Any]]:
+        response = await self._request("GET", "sessions")
+        payload = response.json()
+        if isinstance(payload, list):
+            return [dict(item) for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+            return [
+                dict(item)
+                for item in payload["data"]
+                if isinstance(item, dict)
+            ]
+        return []
+
     async def _find_session(self) -> dict[str, Any] | None:
+        sessions = await self._list_sessions()
+        value = next(
+            (
+                item
+                for item in sessions
+                if (
+                    self.session_id
+                    and str(item.get("id") or "") == self.session_id
+                )
+                or str(item.get("name") or "") == self.session_name
+            ),
+            None,
+        )
+        if value is not None:
+            self._capture_identity(value)
+        return value
+
+    async def _refresh_session(self) -> dict[str, Any] | None:
+        if not self.session_id:
+            return await self._find_session()
         response = await self._request(
             "GET",
             f"sessions/{self.session_id}",
             allowed_statuses={404},
         )
         if response.status_code == 404:
-            return None
-        return dict(response.json())
+            return await self._find_session()
+        value = dict(response.json())
+        self._capture_identity(value)
+        return value
+
+    def _capture_identity(self, value: dict[str, Any]) -> None:
+        identifier = str(value.get("id") or "").strip()
+        if UUID_PATTERN.fullmatch(identifier):
+            self.session_id = identifier
+        name = str(value.get("name") or "").strip()
+        if SESSION_NAME_PATTERN.fullmatch(name):
+            self.session_name = name
+
+    def _required_session_id(self) -> str:
+        if not self.session_id:
+            raise UpstreamServiceError(
+                "OpenWA",
+                f"session {self.session_name} has no valid ID",
+            )
+        return self.session_id
+
+    @classmethod
+    def normalize_status(cls, value: Any) -> str:
+        return OPENWA_STATUS_MAP.get(str(value or "").lower(), "error")
 
     def _session_response(self, value: dict[str, Any]) -> OpenWASessionStatusResponse:
-        status = str(value.get("status") or "disconnected")
+        self._capture_identity(value)
+        upstream_status = str(value.get("status") or "disconnected").lower()
+        status = self.normalize_status(upstream_status)
         return OpenWASessionStatusResponse(
             session_id=self.session_id,
-            name=str(value.get("name") or self.session_id),
+            name=str(value.get("name") or self.session_name),
             status=status,
             api_key_configured=bool(self.api_key),
-            qr_available=bool(value.get("qrAvailable")) or status in {"qr", "qr_ready"},
+            qr_available=(
+                bool(value.get("qrAvailable"))
+                or status == "waiting_qr"
+            ),
             phone_number=value.get("phoneNumber") or value.get("phone"),
         )
 
@@ -207,10 +347,8 @@ class OpenWAClient:
     ) -> httpx.Response:
         if not self.api_key:
             raise ServiceConfigurationError("OPENWA_API_KEY is required.")
-        if not self.session_id:
-            raise ServiceConfigurationError("OPENWA_SESSION_NAME is required.")
         headers = {
-            "X-API-Key": self.api_key,
+            "x-api-key": self.api_key,
             "Content-Type": "application/json",
         }
         max_attempts = 3 if method == "GET" else 1
@@ -273,7 +411,12 @@ class WhatsAppConnector(BaseConnector):
         self.settings = settings or get_settings()
         self.client = OpenWAClient(
             self.settings,
-            session_id=str(
+            session_id=(
+                str(context.config["openwa_session_id"])
+                if context.config.get("openwa_session_id")
+                else None
+            ),
+            session_name=str(
                 context.config.get("session_id")
                 or self.settings.openwa_session_name
             ),

@@ -60,7 +60,8 @@ export interface OpenWAStatus {
 export interface OpenWAQRCode {
   session_id: string;
   status: string;
-  data_url: string;
+  data_url: string | null;
+  message: string;
 }
 
 export async function getOpenWAStatus(): Promise<OpenWAStatus> {

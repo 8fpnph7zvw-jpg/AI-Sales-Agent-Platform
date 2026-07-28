@@ -8,17 +8,22 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
 from app.connectors.base import ConnectorContext
 from app.connectors.whatsapp.client import (
     REQUIRED_CONFIG_KEYS,
+    OpenWAClient,
     WhatsAppConnector,
 )
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
+    OpenWAQRCodeResponse,
+    OpenWASessionStatusResponse,
     WhatsAppConfigStatusResponse,
+    WhatsAppSendResponse,
     WhatsAppTestResponse,
     WhatsAppWebhookPayload,
     WhatsAppWebhookResponse,
@@ -32,6 +37,7 @@ from app.models.auth.tenant import Tenant
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
+from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
@@ -69,6 +75,295 @@ class WhatsAppService:
         self.settings = settings
         self.cipher = cipher
         self.dify = dify
+
+    async def session_status(
+        self,
+        principal: Principal,
+    ) -> OpenWASessionStatusResponse:
+        connector, tenant, whatsapp_session = await self._management_session(
+            principal,
+            for_update=True,
+        )
+        result = await self._client(whatsapp_session).session_status()
+        self._apply_session_status(connector, whatsapp_session, result)
+        await self.session.commit()
+        return result
+
+    async def create_session(
+        self,
+        principal: Principal,
+    ) -> OpenWASessionStatusResponse:
+        connector, tenant, whatsapp_session = await self._management_session(
+            principal,
+            for_update=True,
+        )
+        client = self._client(whatsapp_session)
+        result = await client.create_session()
+        await self._assert_unclaimed(
+            connector,
+            session_name=result.name or whatsapp_session.session_name,
+            session_id=result.session_id,
+        )
+        self._apply_session_status(connector, whatsapp_session, result)
+        await self._commit_session_lifecycle()
+        logger.info(
+            "whatsapp_session_created_or_reused tenant_id=%s connector_id=%s "
+            "openwa_session_id=%s status=%s",
+            tenant.id,
+            connector.public_id,
+            whatsapp_session.session_id,
+            whatsapp_session.status,
+        )
+        return result
+
+    async def qrcode(
+        self,
+        principal: Principal,
+    ) -> OpenWAQRCodeResponse:
+        connector, tenant, whatsapp_session = await self._management_session(
+            principal,
+            for_update=True,
+        )
+        client = self._client(whatsapp_session)
+        result = await client.qrcode()
+        await self._assert_unclaimed(
+            connector,
+            session_name=client.session_name,
+            session_id=client.session_id,
+        )
+        whatsapp_session.session_id = client.session_id
+        whatsapp_session.session_name = client.session_name
+        whatsapp_session.status = result.status
+        if result.data_url:
+            whatsapp_session.qr_code = result.data_url
+        elif result.status in {"connected", "disconnected", "error"}:
+            whatsapp_session.qr_code = None
+        if result.status == "connected":
+            whatsapp_session.last_connected_at = datetime.now(UTC)
+            connector.status = "active"
+            connector.health_status = "healthy"
+        await self._commit_session_lifecycle()
+        logger.info(
+            "whatsapp_qr_status tenant_id=%s connector_id=%s "
+            "openwa_session_id=%s status=%s qr_available=%s",
+            tenant.id,
+            connector.public_id,
+            whatsapp_session.session_id,
+            result.status,
+            bool(result.data_url),
+        )
+        return result
+
+    async def delete_session(
+        self,
+        principal: Principal,
+    ) -> OpenWASessionStatusResponse:
+        connector, _, whatsapp_session = await self._management_session(
+            principal,
+            for_update=True,
+        )
+        result = await self._client(whatsapp_session).delete_session()
+        whatsapp_session.session_id = None
+        whatsapp_session.status = "disconnected"
+        whatsapp_session.qr_code = None
+        connector.status = "draft"
+        connector.health_status = None
+        await self.session.commit()
+        return result
+
+    async def reconnect_session(
+        self,
+        principal: Principal,
+    ) -> OpenWASessionStatusResponse:
+        connector, _, whatsapp_session = await self._management_session(
+            principal,
+            for_update=True,
+        )
+        client = self._client(whatsapp_session)
+        result = await client.reconnect()
+        await self._assert_unclaimed(
+            connector,
+            session_name=client.session_name,
+            session_id=client.session_id,
+        )
+        self._apply_session_status(connector, whatsapp_session, result)
+        await self._commit_session_lifecycle()
+        return result
+
+    async def send_message(
+        self,
+        principal: Principal,
+        recipient: str,
+        text: str,
+    ) -> WhatsAppSendResponse:
+        connector, _, whatsapp_session = await self._management_session(principal)
+        digits = "".join(character for character in recipient if character.isdigit())
+        customer = await self.repository.get_customer_by_phone(
+            principal.tenant_id,
+            f"+{digits}",
+        )
+        if customer is None:
+            raise ResourceNotFoundError("Tenant customer")
+        can_send_all = bool(
+            principal.permissions.intersection(
+                {
+                    "connector.manage",
+                    "conversation.read_all",
+                    "customer.read_all",
+                }
+            )
+        )
+        if not can_send_all and customer.owner_user_id != principal.user_id:
+            raise ResourceNotFoundError("Assigned customer")
+
+        status = await self._client(whatsapp_session).session_status()
+        self._apply_session_status(connector, whatsapp_session, status)
+        await self.session.commit()
+        if status.status != "connected":
+            raise ConflictError(
+                "WHATSAPP_SESSION_NOT_CONNECTED",
+                "The tenant WhatsApp session is not connected.",
+            )
+        return await self._client(whatsapp_session).send_text(recipient, text)
+
+    async def _management_session(
+        self,
+        principal: Principal,
+        *,
+        for_update: bool = False,
+    ) -> tuple[Connector, Tenant, WhatsAppSession]:
+        context = await self.repository.get_management_context(
+            principal.tenant_id,
+            for_update=for_update,
+        )
+        if context is None:
+            raise ResourceNotFoundError("Tenant WhatsApp connector")
+        connector, tenant = context
+        session_name = await self._desired_session_name(connector)
+        whatsapp_session = await self.repository.get_whatsapp_session(
+            principal.tenant_id,
+            connector.id,
+            for_update=for_update,
+        )
+        if whatsapp_session is None:
+            await self._assert_unclaimed(
+                connector,
+                session_name=session_name,
+                session_id=None,
+            )
+            whatsapp_session = WhatsAppSession(
+                tenant_id=principal.tenant_id,
+                connector_id=connector.id,
+                session_name=session_name,
+                status="created",
+            )
+            self.repository.add_whatsapp_session(whatsapp_session)
+            try:
+                await self.session.flush()
+            except IntegrityError as exc:
+                await self.session.rollback()
+                raise ConflictError(
+                    "WHATSAPP_SESSION_ALREADY_CLAIMED",
+                    "This OpenWA session is already assigned to another tenant connector.",
+                ) from exc
+        elif (
+            whatsapp_session.session_name != session_name
+            and whatsapp_session.session_id is None
+        ):
+            await self._assert_unclaimed(
+                connector,
+                session_name=session_name,
+                session_id=None,
+            )
+            whatsapp_session.session_name = session_name
+        return connector, tenant, whatsapp_session
+
+    async def _desired_session_name(self, connector: Connector) -> str:
+        configs = await self.repository.get_configs(connector.id)
+        configured = next(
+            (
+                self._decrypt(connector, config)
+                for config in configs
+                if config.config_key == "session_id"
+                and config.value_encrypted is not None
+            ),
+            None,
+        )
+        external = (
+            connector.external_account_id
+            if connector.external_account_id != "demo-template"
+            else None
+        )
+        return OpenWAClient._resolve_session_name(
+            str(configured or external or ""),
+            self.settings.openwa_session_name,
+        )
+
+    def _client(self, whatsapp_session: WhatsAppSession) -> OpenWAClient:
+        return OpenWAClient(
+            self.settings,
+            session_id=whatsapp_session.session_id,
+            session_name=whatsapp_session.session_name,
+        )
+
+    async def _assert_unclaimed(
+        self,
+        connector: Connector,
+        *,
+        session_name: str,
+        session_id: str | None,
+    ) -> None:
+        claim = await self.repository.get_session_claim(
+            session_name=session_name,
+            session_id=session_id,
+            exclude_connector_id=connector.id,
+        )
+        if claim is not None:
+            raise ConflictError(
+                "WHATSAPP_SESSION_ALREADY_CLAIMED",
+                "This OpenWA session is already assigned to another tenant connector.",
+            )
+
+    @staticmethod
+    def _apply_session_status(
+        connector: Connector,
+        whatsapp_session: WhatsAppSession,
+        result: OpenWASessionStatusResponse,
+    ) -> None:
+        if result.session_id:
+            whatsapp_session.session_id = result.session_id
+        if result.name:
+            whatsapp_session.session_name = result.name
+        whatsapp_session.phone = result.phone_number
+        whatsapp_session.status = result.status
+        if result.status == "connected":
+            whatsapp_session.qr_code = None
+            whatsapp_session.last_connected_at = datetime.now(UTC)
+            connector.status = "active"
+            connector.health_status = "healthy"
+            connector.health_detail = {"message": "WhatsApp session is connected."}
+        elif result.status == "error":
+            whatsapp_session.qr_code = None
+            connector.status = "error"
+            connector.health_status = "unhealthy"
+            connector.health_detail = {"message": "OpenWA session reported an error."}
+        else:
+            connector.status = "draft"
+            connector.health_status = "degraded"
+            connector.health_detail = {
+                "message": f"WhatsApp session is {result.status}."
+            }
+        connector.last_health_check_at = datetime.now(UTC)
+
+    async def _commit_session_lifecycle(self) -> None:
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ConflictError(
+                "WHATSAPP_SESSION_ALREADY_CLAIMED",
+                "This OpenWA session is already assigned to another tenant connector.",
+            ) from exc
 
     async def config_status(
         self,
@@ -190,6 +485,12 @@ class WhatsAppService:
             if config.value_encrypted is not None
         }
         values.setdefault("session_id", self.settings.openwa_session_name)
+        whatsapp_session = await self.repository.get_whatsapp_session(
+            connector.tenant_id,
+            connector.id,
+        )
+        if whatsapp_session and whatsapp_session.session_id:
+            values["openwa_session_id"] = whatsapp_session.session_id
         adapter = WhatsAppConnector(
             ConnectorContext(
                 tenant_id=tenant.public_id,

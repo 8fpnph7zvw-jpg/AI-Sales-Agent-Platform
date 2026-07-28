@@ -54,6 +54,7 @@ def downgrade() -> None:
         "outbox_events",
         "audit_logs",
         "webhook_logs",
+        "whatsapp_sessions",
         "system_configs",
         "notifications",
         "workflow_nodes",

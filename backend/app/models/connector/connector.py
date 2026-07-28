@@ -68,3 +68,10 @@ class Connector(
         lazy="raise",
     )
     webhook_logs = relationship("WebhookLog", back_populates="connector", lazy="raise")
+    whatsapp_session = relationship(
+        "WhatsAppSession",
+        back_populates="connector",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="raise",
+    )

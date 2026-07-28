@@ -63,6 +63,17 @@ class FakeResponse:
         return {"messageId": "wamid.outbound-1", "timestamp": 1710000001}
 
 
+class FakeSessionListResponse(FakeResponse):
+    def json(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+                "name": "sales-bot",
+                "status": "ready",
+            }
+        ]
+
+
 class FakeAsyncClient:
     base_url: str | None = None
     method: str | None = None
@@ -91,18 +102,20 @@ class FakeAsyncClient:
         type(self).path = path
         type(self).headers = headers
         type(self).request_json = kwargs.get("json")
+        if method == "GET" and path == "sessions":
+            return FakeSessionListResponse()
         return FakeResponse()
 
 
 class SequenceResponse:
-    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+    def __init__(self, status_code: int, payload: Any) -> None:
         self.status_code = status_code
         self.payload = payload
 
     def raise_for_status(self) -> None:
         return None
 
-    def json(self) -> dict[str, Any]:
+    def json(self) -> Any:
         return self.payload
 
 
@@ -196,9 +209,12 @@ async def test_openwa_client_keeps_api_key_in_header(
 
     assert FakeAsyncClient.base_url == "http://openwa:2785/api/"
     assert FakeAsyncClient.method == "POST"
-    assert FakeAsyncClient.path == "sessions/sales-bot/messages/send-text"
+    assert (
+        FakeAsyncClient.path
+        == "sessions/6b1d329f-ba60-4eda-b28a-6116d70f9b35/messages/send-text"
+    )
     assert FakeAsyncClient.headers == {
-        "X-API-Key": "server-only-key",
+        "x-api-key": "server-only-key",
         "Content-Type": "application/json",
     }
     assert FakeAsyncClient.request_json == {
@@ -219,7 +235,7 @@ async def test_openwa_session_flow_creates_starts_and_keeps_name_in_paths(
     )
     SequenceAsyncClient.requests = []
     SequenceAsyncClient.responses = [
-        SequenceResponse(404, {"error": "not found"}),
+        SequenceResponse(200, []),
         SequenceResponse(
             201,
             {
@@ -248,16 +264,57 @@ async def test_openwa_session_flow_creates_starts_and_keeps_name_in_paths(
 
     result = await client.create_session()
 
-    assert result.session_id == "ai-sales-agent"
+    assert result.session_id == "6b1d329f-ba60-4eda-b28a-6116d70f9b35"
     assert SequenceAsyncClient.requests == [
-        ("GET", "sessions/ai-sales-agent", None),
+        ("GET", "sessions", None),
         ("POST", "sessions", {"name": "ai-sales-agent"}),
-        ("POST", "sessions/ai-sales-agent/start", None),
+        (
+            "POST",
+            "sessions/6b1d329f-ba60-4eda-b28a-6116d70f9b35/start",
+            None,
+        ),
     ]
-    assert all(
-        "6b1d329f-ba60-4eda-b28a-6116d70f9b35" not in path
-        for _, path, _ in SequenceAsyncClient.requests
+
+
+@pytest.mark.asyncio
+async def test_openwa_create_conflict_lists_and_reuses_existing_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
     )
+    session_id = "6b1d329f-ba60-4eda-b28a-6116d70f9b35"
+    existing = {
+        "id": session_id,
+        "name": "ai-sales-agent",
+        "status": "created",
+    }
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(200, []),
+        SequenceResponse(409, {"error": "Session name already exists"}),
+        SequenceResponse(200, [existing]),
+        SequenceResponse(200, {**existing, "status": "initializing"}),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.create_session()
+
+    assert result.session_id == session_id
+    assert result.status == "starting"
+    assert SequenceAsyncClient.requests == [
+        ("GET", "sessions", None),
+        ("POST", "sessions", {"name": "ai-sales-agent"}),
+        ("GET", "sessions", None),
+        ("POST", f"sessions/{session_id}/start", None),
+    ]
 
 
 @pytest.mark.asyncio
@@ -275,9 +332,15 @@ async def test_openwa_existing_session_continues_after_start_conflict(
     }
     SequenceAsyncClient.requests = []
     SequenceAsyncClient.responses = [
-        SequenceResponse(200, existing),
-        SequenceResponse(409, {"error": "already started"}),
-        SequenceResponse(200, existing),
+        SequenceResponse(
+            200,
+            [
+                {
+                    "id": "6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+                    **existing,
+                }
+            ],
+        ),
     ]
     client = OpenWAClient(
         Settings(
@@ -289,15 +352,13 @@ async def test_openwa_existing_session_continues_after_start_conflict(
 
     result = await client.create_session()
 
-    assert result.status == "ready"
+    assert result.status == "connected"
     assert result.phone_number == "15551234567"
     assert ("POST", "sessions", {"name": "ai-sales-agent"}) not in (
         SequenceAsyncClient.requests
     )
     assert SequenceAsyncClient.requests == [
-        ("GET", "sessions/ai-sales-agent", None),
-        ("POST", "sessions/ai-sales-agent/start", None),
-        ("GET", "sessions/ai-sales-agent", None),
+        ("GET", "sessions", None),
     ]
 
 
@@ -310,13 +371,17 @@ async def test_openwa_qrcode_waits_until_data_url_is_available(
         SequenceAsyncClient,
     )
     monkeypatch.setattr("app.connectors.whatsapp.client.asyncio.sleep", _no_sleep)
-    existing = {"name": "ai-sales-agent", "status": "qr_ready"}
+    session_id = "6b1d329f-ba60-4eda-b28a-6116d70f9b35"
+    existing = {
+        "id": session_id,
+        "name": "ai-sales-agent",
+        "status": "created",
+    }
     SequenceAsyncClient.requests = []
     SequenceAsyncClient.responses = [
-        SequenceResponse(200, existing),
-        SequenceResponse(400, {"error": "already started"}),
-        SequenceResponse(200, existing),
-        SequenceResponse(400, {"error": "QR not ready"}),
+        SequenceResponse(200, [existing]),
+        SequenceResponse(200, {**existing, "status": "initializing"}),
+        SequenceResponse(200, {**existing, "status": "qr_ready"}),
         SequenceResponse(
             200,
             {
@@ -335,12 +400,54 @@ async def test_openwa_qrcode_waits_until_data_url_is_available(
 
     result = await client.qrcode()
 
-    assert result.session_id == "ai-sales-agent"
+    assert result.session_id == session_id
     assert result.data_url == "data:image/png;base64,qr-data"
-    assert SequenceAsyncClient.requests[-2:] == [
-        ("GET", "sessions/ai-sales-agent/qr", None),
-        ("GET", "sessions/ai-sales-agent/qr", None),
+    assert SequenceAsyncClient.requests == [
+        ("GET", "sessions", None),
+        ("POST", f"sessions/{session_id}/start", None),
+        ("GET", f"sessions/{session_id}", None),
+        ("GET", f"sessions/{session_id}/qr", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_openwa_qrcode_returns_friendly_starting_state_when_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    monkeypatch.setattr("app.connectors.whatsapp.client.asyncio.sleep", _no_sleep)
+    session_id = "6b1d329f-ba60-4eda-b28a-6116d70f9b35"
+    starting = {
+        "id": session_id,
+        "name": "ai-sales-agent",
+        "status": "initializing",
+    }
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(200, [starting]),
+        SequenceResponse(200, starting),
+        SequenceResponse(200, starting),
+        SequenceResponse(200, [starting]),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+            whatsapp_timeout_seconds=1,
+        )
+    )
+
+    result = await client.qrcode()
+
+    assert result.session_id == session_id
+    assert result.status == "starting"
+    assert result.data_url is None
+    assert "not ready" in result.message
+    assert all(not path.endswith("/qr") for _, path, _ in SequenceAsyncClient.requests)
 
 
 @pytest.mark.asyncio
@@ -353,7 +460,17 @@ async def test_openwa_delete_session_is_idempotent_and_uses_name(
     )
     SequenceAsyncClient.requests = []
     SequenceAsyncClient.responses = [
-        SequenceResponse(404, {"error": "not found"}),
+        SequenceResponse(
+            200,
+            [
+                {
+                    "id": "6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+                    "name": "ai-sales-agent",
+                    "status": "disconnected",
+                }
+            ],
+        ),
+        SequenceResponse(204, {}),
     ]
     client = OpenWAClient(
         Settings(
@@ -367,7 +484,12 @@ async def test_openwa_delete_session_is_idempotent_and_uses_name(
 
     assert result.status == "disconnected"
     assert SequenceAsyncClient.requests == [
-        ("DELETE", "sessions/ai-sales-agent", None),
+        ("GET", "sessions", None),
+        (
+            "DELETE",
+            "sessions/6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+            None,
+        ),
     ]
 
 

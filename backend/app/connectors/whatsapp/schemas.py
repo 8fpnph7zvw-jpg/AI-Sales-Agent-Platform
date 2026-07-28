@@ -95,7 +95,8 @@ class OpenWASessionStatusResponse(BaseModel):
 class OpenWAQRCodeResponse(BaseModel):
     session_id: str
     status: str
-    data_url: str
+    data_url: str | None = None
+    message: str
 
 
 class WhatsAppConfigStatusResponse(BaseModel):

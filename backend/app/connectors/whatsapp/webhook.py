@@ -8,7 +8,6 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
-from app.connectors.whatsapp.client import OpenWAClient
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     OpenWAQRCodeResponse,
@@ -31,10 +30,6 @@ from app.integrations.dify.client import DifyClient
 webhook_router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"])
 management_router = APIRouter(prefix="/connectors/whatsapp", tags=["WhatsApp Connector"])
 send_router = APIRouter(prefix="/whatsapp", tags=["WhatsApp Connector"])
-
-
-def get_openwa_client() -> OpenWAClient:
-    return OpenWAClient(get_settings())
 
 
 def get_whatsapp_service(
@@ -89,13 +84,13 @@ async def receive_whatsapp_webhook(
 @send_router.post("/send", response_model=WhatsAppSendResponse)
 async def send_whatsapp_message(
     payload: WhatsAppSendRequest,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("message.send", "connector.manage")),
     ],
 ) -> WhatsAppSendResponse:
-    del principal
-    return await OpenWAClient(get_settings()).send_text(payload.recipient, payload.text)
+    return await service.send_message(principal, payload.recipient, payload.text)
 
 
 @management_router.get(
@@ -133,54 +128,54 @@ async def test_whatsapp_connector(
 
 @management_router.get("/status", response_model=OpenWASessionStatusResponse)
 async def openwa_status(
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("connector.read", "connector.manage")),
     ],
 ) -> OpenWASessionStatusResponse:
-    del principal
-    return await get_openwa_client().session_status()
+    return await service.session_status(principal)
 
 
 @management_router.post("/session", response_model=OpenWASessionStatusResponse)
 async def create_openwa_session(
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("connector.manage", "connector.secret_manage")),
     ],
 ) -> OpenWASessionStatusResponse:
-    del principal
-    return await get_openwa_client().create_session()
+    return await service.create_session(principal)
 
 
 @management_router.delete("/session", response_model=OpenWASessionStatusResponse)
 async def delete_openwa_session(
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("connector.manage", "connector.secret_manage")),
     ],
 ) -> OpenWASessionStatusResponse:
-    del principal
-    return await get_openwa_client().delete_session()
+    return await service.delete_session(principal)
 
 
 @management_router.get("/qrcode", response_model=OpenWAQRCodeResponse)
 async def openwa_qrcode(
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("connector.manage", "connector.secret_manage")),
     ],
 ) -> OpenWAQRCodeResponse:
-    del principal
-    return await get_openwa_client().qrcode()
+    return await service.qrcode(principal)
 
 
 @management_router.post("/reconnect", response_model=OpenWASessionStatusResponse)
 async def reconnect_openwa_session(
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("connector.manage", "connector.secret_manage")),
     ],
 ) -> OpenWASessionStatusResponse:
-    del principal
-    return await get_openwa_client().reconnect()
+    return await service.reconnect_session(principal)

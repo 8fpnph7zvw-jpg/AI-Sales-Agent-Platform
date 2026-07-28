@@ -12,6 +12,7 @@ from app.models.auth.user_role import UserRole
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
+from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
@@ -60,6 +61,7 @@ __all__ = [
     "User",
     "UserRole",
     "WebhookLog",
+    "WhatsAppSession",
     "Workflow",
     "WorkflowNode",
 ]

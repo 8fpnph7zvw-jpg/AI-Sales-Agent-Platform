@@ -206,6 +206,32 @@ CREATE TABLE connectors (
     INDEX ix_connectors_tenant_provider (tenant_id, provider)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE whatsapp_sessions (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    connector_id BIGINT UNSIGNED NOT NULL,
+    session_id VARCHAR(64) NULL,
+    session_name VARCHAR(100) NOT NULL,
+    phone VARCHAR(32) NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'created',
+    qr_code MEDIUMTEXT NULL,
+    last_connected_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT pk_whatsapp_sessions PRIMARY KEY (id),
+    CONSTRAINT uq_whatsapp_sessions_connector UNIQUE (connector_id),
+    CONSTRAINT uq_whatsapp_sessions_openwa_session UNIQUE (session_id),
+    CONSTRAINT uq_whatsapp_sessions_session_name UNIQUE (session_name),
+    CONSTRAINT ck_whatsapp_sessions_status_allowed
+        CHECK (status IN ('created', 'starting', 'waiting_qr', 'connected', 'disconnected', 'error')),
+    CONSTRAINT fk_whatsapp_sessions_tenant_id_tenants
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+    CONSTRAINT fk_whatsapp_sessions_connector_id_connectors
+        FOREIGN KEY (connector_id) REFERENCES connectors (id) ON DELETE CASCADE,
+    INDEX ix_whatsapp_sessions_tenant_status (tenant_id, status),
+    INDEX ix_whatsapp_sessions_tenant_connector (tenant_id, connector_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE connector_configs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     tenant_id BIGINT UNSIGNED NOT NULL,
