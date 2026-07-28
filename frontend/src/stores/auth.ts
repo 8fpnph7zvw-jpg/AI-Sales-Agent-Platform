@@ -1,10 +1,11 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
-import { login as loginRequest } from "@/api/auth";
+import { getCurrentUser, login as loginRequest } from "@/api/auth";
 import type { AuthSession, AuthUser, LoginRequest } from "@/types/auth";
 import {
   clearAuthSession,
+  isAuthSessionRemembered,
   readAuthSession,
   writeAuthSession,
 } from "@/utils/auth-storage";
@@ -14,6 +15,8 @@ export const useAuthStore = defineStore("auth", () => {
   const token = ref<string | null>(initial?.token ?? null);
   const expiresAt = ref<number | null>(initial?.expiresAt ?? null);
   const user = ref<AuthUser | null>(initial?.user ?? null);
+  let sessionValidated = false;
+  let validationRequest: Promise<void> | null = null;
 
   const isAuthenticated = computed(
     () => Boolean(token.value && user.value && (expiresAt.value ?? 0) > Date.now()),
@@ -28,7 +31,7 @@ export const useAuthStore = defineStore("auth", () => {
     return permissions.every((item) => permissionSet.value.has(item));
   }
 
-  async function login(payload: LoginRequest): Promise<void> {
+  async function login(payload: LoginRequest, remember = false): Promise<void> {
     const response = await loginRequest(payload);
     const session: AuthSession = {
       token: response.access_token,
@@ -38,7 +41,37 @@ export const useAuthStore = defineStore("auth", () => {
     token.value = session.token;
     expiresAt.value = session.expiresAt;
     user.value = session.user;
-    writeAuthSession(session);
+    writeAuthSession(session, remember);
+    sessionValidated = true;
+  }
+
+  async function restoreSession(): Promise<void> {
+    if (sessionValidated || !isAuthenticated.value) return;
+    if (validationRequest) return validationRequest;
+
+    validationRequest = (async () => {
+      try {
+        const currentUser = await getCurrentUser();
+        user.value = currentUser;
+        writeAuthSession(
+          {
+            token: token.value as string,
+            expiresAt: expiresAt.value as number,
+            user: currentUser,
+          },
+          isAuthSessionRemembered(),
+        );
+        sessionValidated = true;
+      } catch (error) {
+        // A 401 response clears storage in the API interceptor. Network failures
+        // retain the locally valid session so recovery does not force a login.
+        if (!readAuthSession()) logout();
+        throw error;
+      } finally {
+        validationRequest = null;
+      }
+    })();
+    return validationRequest;
   }
 
   function logout(): void {
@@ -57,6 +90,7 @@ export const useAuthStore = defineStore("auth", () => {
     canAny,
     canAll,
     login,
+    restoreSession,
     logout,
   };
 });

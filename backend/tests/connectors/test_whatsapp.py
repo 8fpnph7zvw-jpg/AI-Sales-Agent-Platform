@@ -10,6 +10,7 @@ from app.connectors.base import ConnectorContext
 from app.connectors.registry import connector_registry
 from app.connectors.whatsapp.client import OpenWAClient, WhatsAppConnector
 from app.connectors.whatsapp.schemas import (
+    WhatsAppSendRequest,
     WhatsAppWebhookPayload,
     parse_inbound_messages,
 )
@@ -35,6 +36,21 @@ WEBHOOK_PAYLOAD = {
         "contact": {"id": "15551234567@c.us", "name": "Enterprise Buyer"},
     },
 }
+
+
+def test_send_request_uses_phone_and_message_with_legacy_compatibility() -> None:
+    current = WhatsAppSendRequest.model_validate(
+        {"phone": "+1 555 123 4567", "message": "Hello"}
+    )
+    legacy = WhatsAppSendRequest.model_validate(
+        {"recipient": "+1 555 123 4567", "text": "Hello"}
+    )
+
+    assert current == legacy
+    assert current.model_dump(by_alias=True) == {
+        "phone": "+1 555 123 4567",
+        "message": "Hello",
+    }
 
 
 class FakeResponse:

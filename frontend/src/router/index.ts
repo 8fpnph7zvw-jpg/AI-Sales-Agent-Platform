@@ -114,8 +114,17 @@ export const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore();
+
+  if (to.meta.requiresAuth && auth.isAuthenticated) {
+    try {
+      await auth.restoreSession();
+    } catch {
+      // Authentication failures clear the session; transient network failures
+      // keep the cached route available and retry on the next navigation.
+    }
+  }
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: "login", query: { redirect: to.fullPath } };

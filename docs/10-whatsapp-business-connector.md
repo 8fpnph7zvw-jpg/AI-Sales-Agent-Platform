@@ -120,11 +120,12 @@ curl -X POST http://localhost/api/v1/connectors/config \
 curl -X POST http://localhost/api/v1/whatsapp/send \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{"recipient":"15551234567","text":"Hello from AI Sales Agent"}'
+  -d '{"phone":"15551234567","message":"Hello from AI Sales Agent"}'
 ```
 
 手机号会规范化为 OpenWA 所需的 `<digits>@c.us`；也可以直接传入
-`@c.us` 或 `@g.us` Chat ID。
+`@c.us` 或 `@g.us` Chat ID。为兼容早期客户端，接口仍接受旧字段
+`recipient` 和 `text`，新接入应使用 `phone` 和 `message`。
 
 ## 验收
 
@@ -147,3 +148,11 @@ curl http://localhost/health/live
 OpenWA 使用非官方 WhatsApp 客户端，存在账号限制或封禁风险。生产环境应使用
 独立、可承受损失且已获用户同意的号码，并控制发送频率；合规或关键业务优先考虑
 Meta 官方 WhatsApp Cloud API。
+
+## 管理后台登录恢复
+
+勾选“记住我”后，管理后台仅长期保存 JWT、企业标识和邮箱，密码仍交由浏览器
+Password Manager 管理。刷新或重新打开浏览器时，前端调用 `GET /api/v1/auth/me`
+向服务端重新确认账号状态并刷新用户权限；Token 过期、账号停用或租户停用时才清除
+登录状态。临时网络中断不会删除仍在有效期内的本地会话，网络恢复后的下一次路由
+导航会自动再次验证。

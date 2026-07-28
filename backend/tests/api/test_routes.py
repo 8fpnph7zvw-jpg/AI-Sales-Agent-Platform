@@ -7,6 +7,7 @@ from app.main import create_app
 
 EXPECTED_OPERATIONS = {
     ("/api/v1/auth/login", "post"),
+    ("/api/v1/auth/me", "get"),
     ("/api/v1/customers", "get"),
     ("/api/v1/customers", "post"),
     ("/api/v1/conversations", "get"),

@@ -23,6 +23,8 @@ class Principal:
     tenant_id: int
     tenant_public_id: str
     permissions: frozenset[str]
+    display_name: str = ""
+    email: str = ""
 
 
 async def get_current_principal(
@@ -45,6 +47,8 @@ async def get_current_principal(
         user_public_id=user.public_id,
         tenant_id=tenant.id,
         tenant_public_id=tenant.public_id,
+        display_name=user.display_name,
+        email=user.email,
         permissions=frozenset(permissions),
     )
 

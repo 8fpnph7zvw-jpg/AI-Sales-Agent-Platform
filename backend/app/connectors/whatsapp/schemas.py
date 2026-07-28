@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class OpenWAContact(BaseModel):
@@ -52,8 +52,18 @@ class WhatsAppInboundMessage(BaseModel):
 
 
 class WhatsAppSendRequest(BaseModel):
-    recipient: str = Field(min_length=5, max_length=128)
-    text: str = Field(min_length=1, max_length=4096)
+    recipient: str = Field(
+        min_length=5,
+        max_length=128,
+        validation_alias=AliasChoices("phone", "recipient"),
+        serialization_alias="phone",
+    )
+    text: str = Field(
+        min_length=1,
+        max_length=4096,
+        validation_alias=AliasChoices("message", "text"),
+        serialization_alias="message",
+    )
 
 
 class WhatsAppSendResponse(BaseModel):
