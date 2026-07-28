@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     openwa_url: str = "http://openwa:2785/api"
     openwa_api_key: str = ""
     openwa_session: str = "ai-sales-agent"
+    openwa_session_name: str = "ai-sales-agent"
     whatsapp_graph_api_base_url: str = "https://graph.facebook.com"
     whatsapp_graph_api_version: str = "v23.0"
     whatsapp_timeout_seconds: float = 15.0

@@ -16,6 +16,8 @@ from app.connectors.base import (
 )
 from app.connectors.registry import connector_registry
 from app.connectors.whatsapp.schemas import (
+    OpenWAQRCodeResponse,
+    OpenWASessionStatusResponse,
     WhatsAppSendResponse,
     WhatsAppWebhookPayload,
     normalize_chat_id,
@@ -53,6 +55,42 @@ class OpenWAClient:
     async def test_connection(self) -> dict[str, Any]:
         response = await self._request("GET", f"sessions/{self.session_id}")
         return dict(response.json())
+
+    async def session_status(self) -> OpenWASessionStatusResponse:
+        if not self.api_key or not self.session_id:
+            return OpenWASessionStatusResponse(
+                status="disconnected",
+                api_key_configured=bool(self.api_key),
+            )
+        response = await self._request("GET", f"sessions/{self.session_id}")
+        value = response.json()
+        return OpenWASessionStatusResponse(
+            session_id=value.get("id"),
+            name=value.get("name"),
+            status=str(value.get("status") or "disconnected"),
+            api_key_configured=bool(self.api_key),
+            qr_available=bool(value.get("qrAvailable")),
+            phone_number=value.get("phoneNumber"),
+        )
+
+    async def create_session(self, name: str) -> OpenWASessionStatusResponse:
+        response = await self._request("POST", "sessions", json={"name": name})
+        value = response.json()
+        self.session_id = str(value["id"])
+        return await self.session_status()
+
+    async def qrcode(self) -> OpenWAQRCodeResponse:
+        response = await self._request("GET", f"sessions/{self.session_id}/qr")
+        value = response.json()
+        return OpenWAQRCodeResponse(
+            session_id=str(value["sessionId"]),
+            status=str(value["status"]),
+            data_url=str(value["dataUrl"]),
+        )
+
+    async def reconnect(self) -> OpenWASessionStatusResponse:
+        await self._request("POST", f"sessions/{self.session_id}/reconnect")
+        return await self.session_status()
 
     async def send_text(self, recipient: str, text: str) -> WhatsAppSendResponse:
         response = await self._request(

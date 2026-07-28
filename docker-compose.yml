@@ -212,7 +212,8 @@ services:
       REDIS_ENABLED: "false"
       SSRF_ALLOWED_HOSTS: backend
     ports:
-      - "127.0.0.1:${OPENWA_PORT:-2785}:2785"
+      # Public management access; protect port 2785 with a firewall/IP allowlist.
+      - "0.0.0.0:${OPENWA_PORT:-2785}:2785"
     volumes:
       - openwa_data:/app/data
     healthcheck:
@@ -232,6 +233,9 @@ services:
 
   openwa-init:
     image: ai-sales-agent-openwa:${OPENWA_IMAGE_TAG:-local}
+    # The one-shot initializer must update the bind-mounted project .env and
+    # assign the runtime secret files to the non-root backend UID/GID.
+    user: "0:0"
     entrypoint: ["/bin/sh", "/scripts/init-openwa.sh"]
     environment:
       OPENWA_BASE_URL: http://openwa:2785/api

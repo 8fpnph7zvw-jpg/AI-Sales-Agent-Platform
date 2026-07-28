@@ -11,6 +11,8 @@ from app.api.dependencies.auth import Principal, require_any_permission
 from app.connectors.whatsapp.client import OpenWAClient
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
+    OpenWAQRCodeResponse,
+    OpenWASessionStatusResponse,
     WhatsAppConfigStatusResponse,
     WhatsAppSendRequest,
     WhatsAppSendResponse,
@@ -29,6 +31,10 @@ from app.integrations.dify.client import DifyClient
 webhook_router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"])
 management_router = APIRouter(prefix="/connectors/whatsapp", tags=["WhatsApp Connector"])
 send_router = APIRouter(prefix="/whatsapp", tags=["WhatsApp Connector"])
+
+
+def get_openwa_client() -> OpenWAClient:
+    return OpenWAClient(get_settings())
 
 
 def get_whatsapp_service(
@@ -123,3 +129,48 @@ async def test_whatsapp_connector(
     ],
 ) -> WhatsAppTestResponse:
     return await service.test_connection(principal, payload.connector_id)
+
+
+@management_router.get("/status", response_model=OpenWASessionStatusResponse)
+async def openwa_status(
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.read", "connector.manage")),
+    ],
+) -> OpenWASessionStatusResponse:
+    del principal
+    return await get_openwa_client().session_status()
+
+
+@management_router.post("/session", response_model=OpenWASessionStatusResponse)
+async def create_openwa_session(
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> OpenWASessionStatusResponse:
+    del principal
+    settings = get_settings()
+    return await get_openwa_client().create_session(settings.openwa_session_name)
+
+
+@management_router.get("/qrcode", response_model=OpenWAQRCodeResponse)
+async def openwa_qrcode(
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> OpenWAQRCodeResponse:
+    del principal
+    return await get_openwa_client().qrcode()
+
+
+@management_router.post("/reconnect", response_model=OpenWASessionStatusResponse)
+async def reconnect_openwa_session(
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> OpenWASessionStatusResponse:
+    del principal
+    return await get_openwa_client().reconnect()

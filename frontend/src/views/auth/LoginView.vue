@@ -17,11 +17,21 @@ const router = useRouter();
 const auth = useAuthStore();
 const formRef = ref<FormInstance>();
 const submitting = ref(false);
+<<<<<<< ours
 const rememberedLogin = readRememberedLogin();
 const rememberMe = ref(Boolean(rememberedLogin));
 const form = reactive<LoginRequest>({
   tenant_slug: rememberedLogin?.tenantSlug ?? "",
   email: rememberedLogin?.email ?? "",
+=======
+const rememberedTenantKey = "ai-sales-agent:remembered-tenant";
+const legacyRememberedTenantKey = "remembered_tenant";
+const rememberedTenant = readRememberedTenant();
+const rememberTenant = ref(Boolean(rememberedTenant));
+const form = reactive<LoginRequest>({
+  tenant_slug: rememberedTenant,
+  email: "",
+>>>>>>> theirs
   password: "",
 });
 const rules: FormRules<LoginRequest> = {
@@ -39,16 +49,37 @@ const rules: FormRules<LoginRequest> = {
   ],
 };
 
+function readRememberedTenant(): string {
+  const tenant = localStorage.getItem(rememberedTenantKey)
+    || localStorage.getItem(legacyRememberedTenantKey)
+    || "";
+  return tenant.trim();
+}
+
+function persistRememberedTenant(): void {
+  localStorage.removeItem(legacyRememberedTenantKey);
+  if (rememberTenant.value) {
+    localStorage.setItem(rememberedTenantKey, form.tenant_slug.trim());
+  } else {
+    localStorage.removeItem(rememberedTenantKey);
+  }
+}
+
 async function submit(): Promise<void> {
   if (!(await formRef.value?.validate().catch(() => false))) return;
   submitting.value = true;
   try {
+<<<<<<< ours
     await auth.login(form, rememberMe.value);
     writeRememberedLogin(
       rememberMe.value
         ? { tenantSlug: form.tenant_slug, email: form.email }
         : null,
     );
+=======
+    await auth.login(form);
+    persistRememberedTenant();
+>>>>>>> theirs
     ElMessage.success("登录成功");
     const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/dashboard";
     await router.replace(redirect.startsWith("/") ? redirect : "/dashboard");
@@ -68,6 +99,10 @@ async function submit(): Promise<void> {
         <p class="eyebrow">ENTERPRISE INTELLIGENCE</p>
         <h1>把每一次询盘，<br />转化为可跟进的机会。</h1>
         <p>统一管理跨境客户、AI 会话、知识库、报价与自动化工作流。</p>
+        <div class="ai-orbit" aria-hidden="true">
+          <span class="ai-orbit__core">AI</span>
+          <i v-for="index in 6" :key="index" :class="`ai-orbit__node ai-orbit__node--${index}`" />
+        </div>
       </div>
       <div class="login-story__signal">
         <span class="signal-dot" />
@@ -107,8 +142,13 @@ async function submit(): Promise<void> {
             </el-input>
           </el-form-item>
           <div class="login-options">
+<<<<<<< ours
             <el-checkbox v-model="rememberMe">记住我</el-checkbox>
             <span>仅保存企业标识和邮箱，不保存密码</span>
+=======
+            <el-checkbox v-model="rememberTenant">记住企业信息</el-checkbox>
+            <span>企业级安全登录</span>
+>>>>>>> theirs
           </div>
           <el-button type="primary" size="large" :loading="submitting" class="login-button" @click="submit">
             进入工作台

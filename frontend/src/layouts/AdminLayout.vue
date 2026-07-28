@@ -12,7 +12,9 @@ import {
   MagicStick,
   Menu as MenuIcon,
   Operation,
+  OfficeBuilding,
   Setting,
+  SwitchButton,
   User,
 } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
@@ -60,6 +62,12 @@ const menuItems: MenuItem[] = [
     permissions: ["quotation.read_own", "quotation.read_all", "quotation.create"],
   },
   { path: "/connectors", label: "Connector管理", icon: Connection, permissions: ["connector.read"] },
+  {
+    path: "/connectors/whatsapp",
+    label: "WhatsApp Connector",
+    icon: ChatDotRound,
+    permissions: ["connector.read", "connector.manage"],
+  },
   { path: "/workflows", label: "Workflow管理", icon: MenuIcon, permissions: ["workflow.read"] },
   {
     path: "/system",
@@ -81,6 +89,11 @@ function navigate(path: string): void {
 }
 
 function logout(): void {
+  auth.logout();
+  void router.replace("/login");
+}
+
+function backToLogin(): void {
   auth.logout();
   void router.replace("/login");
 }
@@ -140,6 +153,10 @@ onBeforeUnmount(() => window.removeEventListener("auth:expired", handleExpired))
             <strong>{{ pageTitle }}</strong>
           </div>
         </div>
+        <div class="tenant-chip">
+          <el-icon><OfficeBuilding /></el-icon>
+          <span>{{ auth.user?.tenant_id }}</span>
+        </div>
         <el-dropdown trigger="click">
           <button class="user-menu" type="button">
             <span class="user-avatar">{{ initials }}</span>
@@ -156,6 +173,11 @@ onBeforeUnmount(() => window.removeEventListener("auth:expired", handleExpired))
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <el-button class="topbar-login-button" plain @click="backToLogin">
+          <el-icon><SwitchButton /></el-icon>
+          返回登录
+        </el-button>
+        <el-button type="danger" plain @click="logout">退出登录</el-button>
       </header>
 
       <main class="page-container">

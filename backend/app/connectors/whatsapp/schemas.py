@@ -83,6 +83,21 @@ class WhatsAppTestResponse(BaseModel):
     checked_at: datetime
 
 
+class OpenWASessionStatusResponse(BaseModel):
+    session_id: str | None = None
+    name: str | None = None
+    status: str
+    api_key_configured: bool
+    qr_available: bool = False
+    phone_number: str | None = None
+
+
+class OpenWAQRCodeResponse(BaseModel):
+    session_id: str
+    status: str
+    data_url: str
+
+
 class WhatsAppConfigStatusResponse(BaseModel):
     connector_id: str
     configured_keys: list[str]

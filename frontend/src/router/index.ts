@@ -80,6 +80,15 @@ const routes: RouteRecordRaw[] = [
         meta: { title: "Connector管理", permissions: ["connector.read"] },
       },
       {
+        path: "connectors/whatsapp",
+        name: "whatsapp-connector",
+        component: () => import("@/views/connectors/WhatsAppConnectorView.vue"),
+        meta: {
+          title: "WhatsApp Connector",
+          permissions: ["connector.read", "connector.manage"],
+        },
+      },
+      {
         path: "workflows",
         name: "workflows",
         component: () => import("@/views/workflows/WorkflowView.vue"),
