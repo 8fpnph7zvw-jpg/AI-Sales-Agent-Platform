@@ -94,6 +94,44 @@ class FakeAsyncClient:
         return FakeResponse()
 
 
+class SequenceResponse:
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+        self.status_code = status_code
+        self.payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self.payload
+
+
+class SequenceAsyncClient:
+    responses: list[SequenceResponse] = []
+    requests: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def __init__(self, *, base_url: str, timeout: float) -> None:
+        del base_url, timeout
+
+    async def __aenter__(self) -> SequenceAsyncClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str],
+        **kwargs: Any,
+    ) -> SequenceResponse:
+        del headers
+        type(self).requests.append((method, path, kwargs.get("json")))
+        return type(self).responses.pop(0)
+
+
 def test_openwa_payload_is_normalized_without_losing_provider_identity() -> None:
     parsed = WhatsAppWebhookPayload.model_validate(WEBHOOK_PAYLOAD)
 
@@ -150,7 +188,7 @@ async def test_openwa_client_keeps_api_key_in_header(
             _env_file=None,
             openwa_url="http://openwa:2785/api",
             openwa_api_key="server-only-key",
-            openwa_session="sales-bot",
+            openwa_session_name="sales-bot",
         )
     )
 
@@ -169,6 +207,173 @@ async def test_openwa_client_keeps_api_key_in_header(
     }
     assert "server-only-key" not in str(FakeAsyncClient.request_json)
     assert result.message_id == "wamid.outbound-1"
+
+
+@pytest.mark.asyncio
+async def test_openwa_session_flow_creates_starts_and_keeps_name_in_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(404, {"error": "not found"}),
+        SequenceResponse(
+            201,
+            {
+                "id": "6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+                "name": "ai-sales-agent",
+                "status": "created",
+            },
+        ),
+        SequenceResponse(
+            200,
+            {
+                "id": "6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+                "name": "ai-sales-agent",
+                "status": "initializing",
+            },
+        ),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session="6b1d329f-ba60-4eda-b28a-6116d70f9b35",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.create_session()
+
+    assert result.session_id == "ai-sales-agent"
+    assert SequenceAsyncClient.requests == [
+        ("GET", "sessions/ai-sales-agent", None),
+        ("POST", "sessions", {"name": "ai-sales-agent"}),
+        ("POST", "sessions/ai-sales-agent/start", None),
+    ]
+    assert all(
+        "6b1d329f-ba60-4eda-b28a-6116d70f9b35" not in path
+        for _, path, _ in SequenceAsyncClient.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_openwa_existing_session_continues_after_start_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    existing = {
+        "name": "ai-sales-agent",
+        "status": "ready",
+        "phone": "15551234567",
+    }
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(200, existing),
+        SequenceResponse(409, {"error": "already started"}),
+        SequenceResponse(200, existing),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.create_session()
+
+    assert result.status == "ready"
+    assert result.phone_number == "15551234567"
+    assert ("POST", "sessions", {"name": "ai-sales-agent"}) not in (
+        SequenceAsyncClient.requests
+    )
+    assert SequenceAsyncClient.requests == [
+        ("GET", "sessions/ai-sales-agent", None),
+        ("POST", "sessions/ai-sales-agent/start", None),
+        ("GET", "sessions/ai-sales-agent", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openwa_qrcode_waits_until_data_url_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    monkeypatch.setattr("app.connectors.whatsapp.client.asyncio.sleep", _no_sleep)
+    existing = {"name": "ai-sales-agent", "status": "qr_ready"}
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(200, existing),
+        SequenceResponse(400, {"error": "already started"}),
+        SequenceResponse(200, existing),
+        SequenceResponse(400, {"error": "QR not ready"}),
+        SequenceResponse(
+            200,
+            {
+                "qrCode": "data:image/png;base64,qr-data",
+                "status": "qr_ready",
+            },
+        ),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.qrcode()
+
+    assert result.session_id == "ai-sales-agent"
+    assert result.data_url == "data:image/png;base64,qr-data"
+    assert SequenceAsyncClient.requests[-2:] == [
+        ("GET", "sessions/ai-sales-agent/qr", None),
+        ("GET", "sessions/ai-sales-agent/qr", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openwa_delete_session_is_idempotent_and_uses_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(404, {"error": "not found"}),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.delete_session()
+
+    assert result.status == "disconnected"
+    assert SequenceAsyncClient.requests == [
+        ("DELETE", "sessions/ai-sales-agent", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def _no_sleep(_: float) -> None:
+    return None
 
 
 def test_webhook_signature_uses_openwa_api_key() -> None:

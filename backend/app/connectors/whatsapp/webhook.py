@@ -150,8 +150,18 @@ async def create_openwa_session(
     ],
 ) -> OpenWASessionStatusResponse:
     del principal
-    settings = get_settings()
-    return await get_openwa_client().create_session(settings.openwa_session_name)
+    return await get_openwa_client().create_session()
+
+
+@management_router.delete("/session", response_model=OpenWASessionStatusResponse)
+async def delete_openwa_session(
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> OpenWASessionStatusResponse:
+    del principal
+    return await get_openwa_client().delete_session()
 
 
 @management_router.get("/qrcode", response_model=OpenWAQRCodeResponse)

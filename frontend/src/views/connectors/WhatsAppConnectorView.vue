@@ -5,9 +5,9 @@ import { ElMessage } from "element-plus";
 
 import {
   createOpenWASession,
+  deleteOpenWASession,
   getOpenWAQRCode,
   getOpenWAStatus,
-  reconnectOpenWA,
   type OpenWAStatus,
 } from "@/api/connectors";
 import { getApiErrorMessage } from "@/api/client";
@@ -20,8 +20,8 @@ let pollTimer: number | undefined;
 const statusMeta = computed(() => {
   const value = status.value?.status;
   if (value === "ready") return { label: "已连接", type: "success", icon: CircleCheck } as const;
-  if (["qr", "authenticated", "starting", "reconnecting"].includes(value || "")) {
-    return { label: value === "qr" ? "等待扫码" : "正在连接", type: "warning", icon: Warning } as const;
+  if (["qr", "qr_ready", "authenticated", "starting", "initializing", "reconnecting"].includes(value || "")) {
+    return { label: ["qr", "qr_ready"].includes(value || "") ? "等待扫码" : "正在连接", type: "warning", icon: Warning } as const;
   }
   return { label: "未连接", type: "info", icon: Connection } as const;
 });
@@ -58,6 +58,7 @@ async function createSession(): Promise<void> {
 async function showQRCode(): Promise<void> {
   loading.value = true;
   try {
+    status.value = await createOpenWASession();
     const value = await getOpenWAQRCode();
     qrDataUrl.value = value.data_url;
     ElMessage.success("请使用 WhatsApp 扫描二维码");
@@ -72,9 +73,12 @@ async function showQRCode(): Promise<void> {
 async function reconnect(): Promise<void> {
   loading.value = true;
   try {
-    status.value = await reconnectOpenWA();
+    await deleteOpenWASession();
     qrDataUrl.value = "";
-    ElMessage.success("已发起重新连接");
+    status.value = await createOpenWASession();
+    const value = await getOpenWAQRCode();
+    qrDataUrl.value = value.data_url;
+    ElMessage.success("已重新创建 Session，请使用 WhatsApp 扫描二维码");
   } catch (error) {
     ElMessage.error(getApiErrorMessage(error));
   } finally {
@@ -120,8 +124,8 @@ onUnmounted(() => window.clearInterval(pollTimer));
         </el-descriptions>
         <div class="connector-actions">
           <el-button type="primary" @click="createSession">创建 Session</el-button>
-          <el-button type="success" :disabled="!status?.session_id" @click="showQRCode">连接 WhatsApp</el-button>
-          <el-button :disabled="!status?.session_id" @click="reconnect">重新连接</el-button>
+          <el-button type="success" @click="showQRCode">连接 WhatsApp</el-button>
+          <el-button @click="reconnect">重新连接</el-button>
         </div>
       </el-card>
 

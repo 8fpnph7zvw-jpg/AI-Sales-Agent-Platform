@@ -73,6 +73,11 @@ export async function createOpenWASession(): Promise<OpenWAStatus> {
   return data;
 }
 
+export async function deleteOpenWASession(): Promise<OpenWAStatus> {
+  const { data } = await apiClient.delete<OpenWAStatus>("/connectors/whatsapp/session");
+  return data;
+}
+
 export async function getOpenWAQRCode(): Promise<OpenWAQRCode> {
   const { data } = await apiClient.get<OpenWAQRCode>("/connectors/whatsapp/qrcode");
   return data;

@@ -189,7 +189,7 @@ class WhatsAppService:
             for config in configs
             if config.value_encrypted is not None
         }
-        values.setdefault("session_id", self.settings.openwa_session)
+        values.setdefault("session_id", self.settings.openwa_session_name)
         adapter = WhatsAppConnector(
             ConnectorContext(
                 tenant_id=tenant.public_id,
