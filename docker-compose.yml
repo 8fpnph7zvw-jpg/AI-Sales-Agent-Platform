@@ -204,9 +204,6 @@ services:
       API_MASTER_KEY: ${OPENWA_API_KEY:-}
       AUTO_START_SESSIONS: ${OPENWA_AUTO_START_SESSIONS:-true}
       ENGINE_TYPE: ${OPENWA_ENGINE_TYPE:-whatsapp-web.js}
-      # Use the live first-party WhatsApp Web page. "off" disables OpenWA's
-      # wa-version/remotePath pinning; it is not a fixed WhatsApp Web version.
-      WWEBJS_WEB_VERSION: "off"
       DATABASE_TYPE: sqlite
       DATABASE_NAME: /app/data/openwa.sqlite
       STORAGE_TYPE: local
