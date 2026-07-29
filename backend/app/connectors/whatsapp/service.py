@@ -436,7 +436,6 @@ class WhatsAppService:
         )
         if whatsapp_session is None:
             raise ResourceNotFoundError("Tenant WhatsApp session")
-
         observed_at = payload.timestamp or datetime.now(UTC)
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
@@ -597,6 +596,14 @@ class WhatsAppService:
         )
         if whatsapp_session is None:
             raise ResourceNotFoundError("Tenant WhatsApp session")
+        logger.info(
+            "message_received tenant_id=%s connector_id=%s session_id=%s "
+            "event=%s",
+            context[0].tenant_id,
+            context[0].public_id,
+            payload.session_id,
+            payload.event,
+        )
         now = datetime.now(UTC)
         whatsapp_session.status = "connected"
         whatsapp_session.last_connected_at = now
@@ -905,6 +912,7 @@ class WhatsAppService:
             direction="inbound",
             sender_type="customer",
             sender_ref=external_contact_id,
+            source="whatsapp",
             message_type="text",
             content_text=self._text(envelope),
             content_json={
@@ -944,6 +952,7 @@ class WhatsAppService:
             direction="outbound",
             sender_type="ai",
             sender_ref=run.public_id,
+            source="whatsapp",
             message_type="text",
             content_text=result.answer,
             idempotency_key=f"whatsapp:agent:{run.public_id}",
@@ -1003,6 +1012,10 @@ class WhatsAppService:
         except Exception as exc:
             outbound.status = "failed"
             outbound.error_code = getattr(exc, "code", "WHATSAPP_SEND_FAILED")
+            outbound.content_json = {
+                **(outbound.content_json or {}),
+                "send_error": str(exc)[:1000],
+            }
             self._mark_failed(webhook_log, exc)
             await self.session.commit()
             logger.exception(

@@ -57,6 +57,7 @@ export interface Message {
   sequence_no: number;
   direction: string;
   sender_type: string;
+  source: "whatsapp" | "admin_test" | "web";
   message_type: string;
   content: string;
   status: string;

@@ -25,6 +25,11 @@ const selected = ref<Conversation | null>(null);
 const messages = ref<Message[]>([]);
 const messageText = ref("");
 const query = reactive({ page: 1, limit: 20, search: "", status: "" });
+const sourceLabels = {
+  whatsapp: "WhatsApp",
+  admin_test: "后台测试",
+  web: "Web",
+} as const;
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -70,7 +75,7 @@ async function send(): Promise<void> {
     });
     messages.value.push(message);
     messageText.value = "";
-    ElMessage.success("消息已进入发送队列");
+    ElMessage.success(message.status === "sent" ? "消息已发送到 WhatsApp" : "消息已进入发送队列");
   } catch (errorValue) {
     ElMessage.error(getApiErrorMessage(errorValue));
   } finally {
@@ -133,7 +138,11 @@ onMounted(load);
           class="message-bubble"
           :class="{ 'message-bubble--outbound': message.direction === 'outbound' }"
         >
-          <small>{{ message.sender_type }} · {{ formatDateTime(message.created_at) }}</small>
+          <small>
+            {{ message.sender_type }} ·
+            {{ sourceLabels[message.source] || message.source }} ·
+            {{ formatDateTime(message.created_at) }}
+          </small>
           <p>{{ message.content }}</p>
           <span>{{ message.status }}</span>
         </div>

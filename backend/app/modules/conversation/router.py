@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.modules.conversation.repository import ConversationRepository
 from app.modules.conversation.schemas import (
@@ -23,7 +24,11 @@ management_router = APIRouter(prefix="/conversations", tags=["Conversation"])
 def get_conversation_service(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ConversationService:
-    return ConversationService(session, ConversationRepository(session))
+    return ConversationService(
+        session,
+        ConversationRepository(session),
+        get_settings(),
+    )
 
 
 @management_router.post("", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)

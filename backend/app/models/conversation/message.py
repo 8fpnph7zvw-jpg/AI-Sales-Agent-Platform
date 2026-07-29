@@ -30,6 +30,10 @@ class Message(BigIntPrimaryKeyMixin, PublicIdMixin, Base):
             "sender_type IN ('customer','ai','user','system')",
             name="sender_type_allowed",
         ),
+        CheckConstraint(
+            "source IN ('whatsapp','admin_test','web')",
+            name="source_allowed",
+        ),
         Index("ix_messages_conversation_created", "conversation_id", "created_at"),
         Index("ix_messages_external", "connector_id", "external_message_id"),
         Index("ix_messages_tenant_status", "tenant_id", "status", "created_at"),
@@ -53,6 +57,9 @@ class Message(BigIntPrimaryKeyMixin, PublicIdMixin, Base):
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
     sender_type: Mapped[str] = mapped_column(String(16), nullable=False)
     sender_ref: Mapped[str | None] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="web", server_default="web"
+    )
     message_type: Mapped[str] = mapped_column(String(32), nullable=False)
     content_text: Mapped[str | None] = mapped_column(mysql.MEDIUMTEXT)
     content_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)

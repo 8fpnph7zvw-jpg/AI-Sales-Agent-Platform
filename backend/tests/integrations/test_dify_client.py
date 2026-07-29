@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 
 from app.core.config import Settings
+from app.core.exceptions import ServiceConfigurationError, UpstreamServiceError
 from app.integrations.dify.client import DifyClient
 
 
@@ -59,6 +61,19 @@ class FakeAsyncClient:
         return FakeResponse()
 
 
+class UnauthorizedAsyncClient(FakeAsyncClient):
+    async def post(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        del json, headers
+        request = httpx.Request("POST", f"https://api.dify.ai/v1/{path}")
+        return httpx.Response(401, request=request, json={"message": "Unauthorized"})
+
+
 @pytest.mark.asyncio
 async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) -> None:
     monkeypatch.setattr("app.integrations.dify.client.httpx.AsyncClient", FakeAsyncClient)
@@ -75,7 +90,7 @@ async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) 
         inputs={"language": "en"},
     )
 
-    assert FakeAsyncClient.base_url == "https://api.dify.ai/v1"
+    assert FakeAsyncClient.base_url == "https://api.dify.ai/v1/"
     assert FakeAsyncClient.request_path == "chat-messages"
     assert FakeAsyncClient.request_headers == {
         "Authorization": "Bearer server-only-key",
@@ -85,3 +100,49 @@ async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) 
     assert result.answer == "Enterprise response"
     assert result.prompt_tokens == 10
     assert result.latency_ms == 250
+
+
+@pytest.mark.asyncio
+async def test_dify_401_reports_app_api_key_requirement(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.integrations.dify.client.httpx.AsyncClient",
+        UnauthorizedAsyncClient,
+    )
+    client = DifyClient(
+        Settings(
+            _env_file=None,
+            dify_api_base_url="https://api.dify.ai/v1",
+            dify_api_key="app-invalid-key",
+        )
+    )
+
+    with pytest.raises(UpstreamServiceError) as exc_info:
+        await client.chat(
+            query="风衣",
+            user="test-user",
+            conversation_id=None,
+            inputs={},
+        )
+
+    assert "HTTP 401" in exc_info.value.message
+    assert "App API key" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_dify_dataset_key_is_rejected_before_chat_request() -> None:
+    client = DifyClient(
+        Settings(
+            _env_file=None,
+            dify_api_key="dataset-not-an-app-key",
+        )
+    )
+
+    with pytest.raises(ServiceConfigurationError) as exc_info:
+        await client.chat(
+            query="风衣",
+            user="test-user",
+            conversation_id=None,
+            inputs={},
+        )
+
+    assert "Dataset/Knowledge" in exc_info.value.message

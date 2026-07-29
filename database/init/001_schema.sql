@@ -377,6 +377,7 @@ CREATE TABLE messages (
     direction VARCHAR(16) NOT NULL,
     sender_type VARCHAR(16) NOT NULL,
     sender_ref VARCHAR(255) NULL,
+    source VARCHAR(24) NOT NULL DEFAULT 'web',
     message_type VARCHAR(32) NOT NULL,
     content_text MEDIUMTEXT NULL,
     content_json JSON NULL,
@@ -400,6 +401,8 @@ CREATE TABLE messages (
         CHECK (direction IN ('inbound', 'outbound', 'internal')),
     CONSTRAINT ck_messages_sender_type_allowed
         CHECK (sender_type IN ('customer', 'ai', 'user', 'system')),
+    CONSTRAINT ck_messages_source_allowed
+        CHECK (source IN ('whatsapp', 'admin_test', 'web')),
     CONSTRAINT fk_messages_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT,
     CONSTRAINT fk_messages_conversation_id_conversations

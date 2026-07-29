@@ -12,6 +12,9 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import AppError
 from app.db.session import dispose_engine
+from app.integrations.dify.client import dify_key_type
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -28,6 +31,12 @@ def create_app() -> FastAPI:
             "%(asctime)s %(levelname)s %(name)s "
             "%(message)s"
         ),
+    )
+    logger.info(
+        "dify_configuration base_url=%s api_key_configured=%s api_key_type=%s",
+        settings.dify_api_base_url,
+        bool(settings.dify_api_key),
+        dify_key_type(settings.dify_api_key),
     )
     application = FastAPI(
         title=settings.app_name,

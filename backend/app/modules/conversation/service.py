@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
+from app.connectors.whatsapp.client import OpenWAClient
+from app.core.config import Settings
 from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
@@ -26,9 +28,11 @@ class ConversationService:
         self,
         session: AsyncSession,
         repository: ConversationRepository,
+        settings: Settings | None = None,
     ) -> None:
         self.session = session
         self.repository = repository
+        self.settings = settings
 
     async def create(
         self,
@@ -198,6 +202,10 @@ class ConversationService:
                 )
             return self._response(existing, payload.conversation_id, duplicate=True)
 
+        delivery_context = await self.repository.get_delivery_context(
+            principal.tenant_id,
+            conversation.customer_session_id,
+        )
         now = datetime.now(UTC)
         message = Message(
             tenant_id=principal.tenant_id,
@@ -207,6 +215,7 @@ class ConversationService:
             direction="outbound",
             sender_type="user",
             sender_ref=principal.user_public_id,
+            source="web",
             message_type=payload.message_type,
             content_text=payload.content,
             content_json=payload.content_json,
@@ -219,20 +228,57 @@ class ConversationService:
 
         conversation.last_message_at = now
         conversation.version += 1
-        self.session.add(
-            OutboxEvent(
-                tenant_id=principal.tenant_id,
-                aggregate_type="conversation",
-                aggregate_id=conversation.public_id,
-                event_type="connector.message.send.requested.v1",
-                payload={
-                    "message_id": message.public_id,
-                    "conversation_id": conversation.public_id,
-                },
-                available_at=now,
-            )
+        is_live_whatsapp = bool(
+            delivery_context
+            and delivery_context[1].provider == "whatsapp"
+            and delivery_context[2] is not None
+            and not delivery_context[0].external_contact_id.startswith("demo:")
         )
+        if not is_live_whatsapp:
+            self.session.add(
+                OutboxEvent(
+                    tenant_id=principal.tenant_id,
+                    aggregate_type="conversation",
+                    aggregate_id=conversation.public_id,
+                    event_type="connector.message.send.requested.v1",
+                    payload={
+                        "message_id": message.public_id,
+                        "conversation_id": conversation.public_id,
+                    },
+                    available_at=now,
+                )
+            )
         await self.session.commit()
+        if is_live_whatsapp:
+            customer_session, _connector, whatsapp_session = delivery_context
+            if self.settings is None or whatsapp_session is None:
+                raise ConflictError(
+                    "WHATSAPP_DELIVERY_NOT_CONFIGURED",
+                    "WhatsApp delivery is not configured for this conversation.",
+                )
+            client = OpenWAClient(
+                self.settings,
+                session_id=whatsapp_session.session_id,
+                session_name=whatsapp_session.session_name,
+            )
+            try:
+                result = await client.send_text(
+                    customer_session.external_contact_id,
+                    payload.content,
+                )
+            except Exception as exc:
+                message.status = "failed"
+                message.error_code = getattr(exc, "code", "WHATSAPP_SEND_FAILED")
+                message.content_json = {
+                    **(message.content_json or {}),
+                    "send_error": str(exc)[:1000],
+                }
+                await self.session.commit()
+                raise
+            message.status = "sent"
+            message.external_message_id = result.message_id
+            message.sent_at = datetime.now(UTC)
+            await self.session.commit()
         return self._response(message, conversation.public_id)
 
     @staticmethod
@@ -248,6 +294,7 @@ class ConversationService:
             sequence_no=message.sequence_no,
             direction=message.direction,
             sender_type=message.sender_type,
+            source=message.source,
             message_type=message.message_type,
             content=message.content_text or "",
             status=message.status,

@@ -45,6 +45,7 @@ class ConversationMessageResponse(BaseModel):
     sequence_no: int
     direction: str
     sender_type: str
+    source: str
     message_type: str
     content: str
     status: str

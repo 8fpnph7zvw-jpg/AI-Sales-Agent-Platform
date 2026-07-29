@@ -4,6 +4,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connector.connector import Connector
+from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
@@ -186,6 +187,30 @@ class ConversationRepository:
         if connector_id is None:
             raise RuntimeError("Conversation customer session has no connector.")
         return int(connector_id)
+
+    async def get_delivery_context(
+        self,
+        tenant_id: int,
+        customer_session_id: int,
+    ) -> tuple[CustomerSession, Connector, WhatsAppSession | None] | None:
+        row = (
+            await self.session.execute(
+                select(CustomerSession, Connector, WhatsAppSession)
+                .join(Connector, Connector.id == CustomerSession.connector_id)
+                .outerjoin(
+                    WhatsAppSession,
+                    WhatsAppSession.connector_id == Connector.id,
+                )
+                .where(
+                    CustomerSession.id == customer_session_id,
+                    CustomerSession.tenant_id == tenant_id,
+                    Connector.tenant_id == tenant_id,
+                    Connector.deleted_at.is_(None),
+                )
+                .limit(1)
+            )
+        ).one_or_none()
+        return (row[0], row[1], row[2]) if row else None
 
     def add_message(self, message: Message) -> None:
         self.session.add(message)

@@ -59,6 +59,8 @@ OPENWA_STATUS_MAP = {
     "ready": "connected",
     "connected": "connected",
     "disconnected": "disconnected",
+    "degraded": "disconnected",
+    "auth_failure": "disconnected",
     "failed": "error",
     "error": "error",
 }
@@ -233,7 +235,10 @@ class OpenWAClient:
     async def reconnect(self) -> OpenWASessionStatusResponse:
         value = await self._find_session()
         if value is None:
-            return await self.ensure_session_started()
+            raise UpstreamServiceError(
+                "OpenWA",
+                "the bound session was not found; refusing to create a replacement session",
+            )
         response = await self._request(
             "POST",
             f"sessions/{self._required_session_id()}/reconnect",
@@ -271,12 +276,39 @@ class OpenWAClient:
                 "OpenWA",
                 f"session {self.session_name} does not exist",
             )
-        response = await self._request(
-            "POST",
-            f"sessions/{self._required_session_id()}/messages/send-text",
-            json={"chatId": normalize_chat_id(recipient), "text": text},
+        chat_id = normalize_chat_id(recipient)
+        logger.info(
+            "send_message_request session_id=%s phone=%s message=%r status=pending",
+            self.session_id,
+            recipient,
+            text[:500],
         )
-        return WhatsAppSendResponse.model_validate(response.json())
+        try:
+            response = await self._request(
+                "POST",
+                f"sessions/{self._required_session_id()}/messages/send-text",
+                json={"chatId": chat_id, "text": text},
+            )
+            result = WhatsAppSendResponse.model_validate(response.json())
+        except Exception as exc:
+            logger.exception(
+                "send_message_response session_id=%s phone=%s message=%r "
+                "status=failed error=%s",
+                self.session_id,
+                recipient,
+                text[:500],
+                str(exc)[:1000],
+            )
+            raise
+        logger.info(
+            "send_message_response session_id=%s phone=%s message=%r "
+            "status=sent provider_message_id=%s error=null",
+            self.session_id,
+            recipient,
+            text[:500],
+            result.message_id,
+        )
+        return result
 
     async def _list_sessions(self) -> list[dict[str, Any]]:
         response = await self._request("GET", "sessions")
@@ -415,6 +447,15 @@ class OpenWAClient:
                     continue
                 raise UpstreamServiceError("OpenWA", "request timed out") from exc
             except httpx.HTTPStatusError as exc:
+                try:
+                    error_payload = exc.response.json()
+                    upstream_detail = (
+                        error_payload.get("error")
+                        if isinstance(error_payload, dict)
+                        else None
+                    )
+                except ValueError:
+                    upstream_detail = None
                 logger.warning(
                     "openwa_http_error status=%s path=%s",
                     exc.response.status_code,
@@ -422,7 +463,12 @@ class OpenWAClient:
                 )
                 raise UpstreamServiceError(
                     "OpenWA",
-                    f"returned HTTP {exc.response.status_code}",
+                    (
+                        f"returned HTTP {exc.response.status_code}: "
+                        f"{str(upstream_detail)[:500]}"
+                        if upstream_detail
+                        else f"returned HTTP {exc.response.status_code}"
+                    ),
                 ) from exc
             except httpx.HTTPError as exc:
                 raise UpstreamServiceError("OpenWA", "request failed") from exc

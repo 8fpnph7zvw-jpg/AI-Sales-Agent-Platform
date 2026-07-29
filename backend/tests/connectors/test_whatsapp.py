@@ -19,7 +19,7 @@ from app.connectors.whatsapp.schemas import (
 )
 from app.connectors.whatsapp.service import WhatsAppService
 from app.core.config import Settings
-from app.core.exceptions import AppError
+from app.core.exceptions import AppError, UpstreamServiceError
 from app.schemas.protocol import Direction, TextContent
 
 WEBHOOK_PAYLOAD = {
@@ -591,6 +591,35 @@ async def test_openwa_reconnect_falls_back_to_start_without_deleting_session(
         ("POST", f"sessions/{session_id}/start", None),
     ]
     assert all(method != "DELETE" for method, _, _ in SequenceAsyncClient.requests)
+
+
+@pytest.mark.asyncio
+async def test_openwa_reconnect_never_creates_a_replacement_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [SequenceResponse(200, [])]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    with pytest.raises(UpstreamServiceError) as exc_info:
+        await client.reconnect()
+
+    assert "refusing to create" in exc_info.value.message
+    assert SequenceAsyncClient.requests == [("GET", "sessions", None)]
+    assert all(
+        method not in {"POST", "DELETE"}
+        for method, _, _ in SequenceAsyncClient.requests
+    )
 
 
 @pytest.mark.asyncio
