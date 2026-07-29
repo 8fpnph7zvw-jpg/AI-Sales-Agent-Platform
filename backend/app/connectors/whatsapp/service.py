@@ -22,6 +22,7 @@ from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     OpenWAQRCodeResponse,
     OpenWASessionStatusResponse,
+    OpenWAStatusWebhookPayload,
     WhatsAppConfigStatusResponse,
     WhatsAppSendResponse,
     WhatsAppTestResponse,
@@ -147,9 +148,12 @@ class WhatsAppService:
         elif result.status in {"connected", "disconnected", "error"}:
             whatsapp_session.qr_code = None
         if result.status == "connected":
-            whatsapp_session.last_connected_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            whatsapp_session.last_connected_at = now
             connector.status = "active"
             connector.health_status = "healthy"
+            connector.last_connected_at = now
+            connector.last_disconnect_reason = None
         await self._commit_session_lifecycle()
         logger.info(
             "whatsapp_qr_status tenant_id=%s connector_id=%s "
@@ -360,31 +364,44 @@ class WhatsAppService:
             connector.session_id = result.session_id
         if result.name:
             whatsapp_session.session_name = result.name
-        whatsapp_session.phone = result.phone_number
+        if result.phone_number:
+            whatsapp_session.phone = result.phone_number
+            connector.phone = result.phone_number
         whatsapp_session.status = result.status
         whatsapp_session.last_error = result.last_error
         whatsapp_session.session_data = {
             **(result.session_data or {}),
             "openwa_session_id": whatsapp_session.session_id,
             "session_name": whatsapp_session.session_name,
-            "phone": result.phone_number,
+            "phone": result.phone_number or whatsapp_session.phone,
             "status": result.status,
             "observed_at": datetime.now(UTC).isoformat(),
         }
         if result.status == "connected":
+            now = datetime.now(UTC)
             whatsapp_session.qr_code = None
-            whatsapp_session.last_connected_at = datetime.now(UTC)
+            whatsapp_session.last_connected_at = now
             whatsapp_session.last_error = None
             connector.status = "active"
             connector.health_status = "healthy"
             connector.health_detail = {"message": "WhatsApp session is connected."}
-        elif result.status == "error":
+            connector.last_connected_at = now
+            connector.last_disconnect_reason = None
+        elif result.status in {"disconnected", "error"}:
             whatsapp_session.qr_code = None
             connector.status = "error"
-            connector.health_status = "unhealthy"
+            connector.health_status = (
+                "unhealthy" if result.status == "error" else "degraded"
+            )
             connector.health_detail = {
-                "message": result.last_error or "OpenWA session reported an error."
+                "message": (
+                    result.last_error
+                    or f"WhatsApp session is {result.status}."
+                )
             }
+            connector.last_disconnect_reason = (
+                result.last_error or f"OpenWA session is {result.status}."
+            )
         else:
             connector.status = "draft"
             connector.health_status = "degraded"
@@ -392,6 +409,79 @@ class WhatsAppService:
                 "message": f"WhatsApp session is {result.status}."
             }
         connector.last_health_check_at = datetime.now(UTC)
+
+    async def handle_status_webhook(
+        self,
+        *,
+        raw_body: bytes,
+        payload: OpenWAStatusWebhookPayload,
+        headers: dict[str, str],
+    ) -> WhatsAppWebhookResponse:
+        self._verify_signature(
+            raw_body,
+            headers.get("x-openwa-signature"),
+            self.settings.openwa_api_key,
+        )
+        event = payload.event.strip().lower()
+        if event not in {"ready", "connected", "authenticated", "disconnected"}:
+            return WhatsAppWebhookResponse(status="ignored")
+        context = await self.repository.get_connector_by_session(payload.session_id)
+        if context is None:
+            raise ResourceNotFoundError("Active WhatsApp connector")
+        connector, _tenant = context
+        whatsapp_session = await self.repository.get_whatsapp_session(
+            connector.tenant_id,
+            connector.id,
+            for_update=True,
+        )
+        if whatsapp_session is None:
+            raise ResourceNotFoundError("Tenant WhatsApp session")
+
+        observed_at = payload.timestamp or datetime.now(UTC)
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        last_observed_value = (whatsapp_session.session_data or {}).get(
+            "last_status_webhook_at"
+        )
+        if isinstance(last_observed_value, str):
+            try:
+                last_observed_at = datetime.fromisoformat(
+                    last_observed_value.replace("Z", "+00:00")
+                )
+                if last_observed_at.tzinfo is None:
+                    last_observed_at = last_observed_at.replace(tzinfo=UTC)
+                if last_observed_at >= observed_at:
+                    return WhatsAppWebhookResponse(status="accepted")
+            except ValueError:
+                pass
+
+        observed_status = OpenWAClient.normalize_status(payload.status or event)
+        result = OpenWASessionStatusResponse(
+            session_id=payload.session_id,
+            name=whatsapp_session.session_name,
+            status=observed_status,
+            api_key_configured=bool(self.settings.openwa_api_key),
+            phone_number=payload.phone_number,
+            last_error=payload.reason if observed_status == "disconnected" else None,
+            session_data={
+                **(whatsapp_session.session_data or {}),
+                "last_status_event": event,
+                "last_status_delivery_id": payload.delivery_id,
+                "last_status_webhook_at": observed_at.isoformat(),
+            },
+        )
+        self._apply_session_status(connector, whatsapp_session, result)
+        await self._commit_session_lifecycle()
+        logger.info(
+            "openwa_status_webhook tenant_id=%s connector_id=%s "
+            "openwa_session_id=%s event=%s status=%s",
+            connector.tenant_id,
+            connector.public_id,
+            payload.session_id,
+            event,
+            observed_status,
+        )
+        return WhatsAppWebhookResponse(status="accepted")
 
     async def _commit_session_lifecycle(self) -> None:
         try:
@@ -521,6 +611,9 @@ class WhatsAppService:
         context[0].health_status = "healthy"
         context[0].health_detail = {"message": "WhatsApp webhook is active."}
         context[0].last_health_check_at = now
+        context[0].phone = whatsapp_session.phone
+        context[0].last_connected_at = now
+        context[0].last_disconnect_reason = None
         if payload.event == "message.sent":
             await self.session.commit()
             return WhatsAppWebhookResponse(status="accepted")

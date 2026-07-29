@@ -52,9 +52,10 @@ OPENWA_STATUS_MAP = {
     "reconnecting": "starting",
     "initializing": "starting",
     "authenticating": "starting",
-    "authenticated": "starting",
+    "authenticated": "connected",
     "qr": "waiting_qr",
     "qr_ready": "waiting_qr",
+    "waiting_qr": "waiting_qr",
     "ready": "connected",
     "connected": "connected",
     "disconnected": "disconnected",
@@ -236,9 +237,27 @@ class OpenWAClient:
         response = await self._request(
             "POST",
             f"sessions/{self._required_session_id()}/reconnect",
-            allowed_statuses={202, 409},
+            allowed_statuses={202, 404, 409},
         )
+        if response.status_code == 404:
+            logger.info(
+                "OpenWA API has no reconnect route; restarting existing session id=%s",
+                self.session_id,
+            )
+            response = await self._request(
+                "POST",
+                f"sessions/{self._required_session_id()}/start",
+                allowed_statuses={202, 400, 404, 409},
+            )
+            if response.status_code == 404:
+                raise UpstreamServiceError(
+                    "OpenWA",
+                    "does not support reconnect or start for the existing session",
+                )
         if response.status_code == 409:
+            current = await self._refresh_session()
+            return self._session_response(current or value)
+        if response.status_code == 400:
             current = await self._refresh_session()
             return self._session_response(current or value)
         restarted = dict(response.json())
@@ -334,8 +353,11 @@ class OpenWAClient:
             status=status,
             api_key_configured=bool(self.api_key),
             qr_available=(
-                bool(value.get("qrAvailable"))
-                or status == "waiting_qr"
+                status != "connected"
+                and (
+                    bool(value.get("qrAvailable"))
+                    or status == "waiting_qr"
+                )
             ),
             phone_number=value.get("phoneNumber") or value.get("phone"),
             last_error=value.get("lastError") or value.get("last_error"),
@@ -463,9 +485,9 @@ class WhatsAppConnector(BaseConnector):
         started = perf_counter()
         data = await self.client.test_connection()
         latency_ms = int((perf_counter() - started) * 1000)
-        status = str(data.get("status") or "unknown")
+        status = self.client.normalize_status(data.get("status"))
         return HealthResult(
-            status="healthy" if status == "ready" else "degraded",
+            status="healthy" if status == "connected" else "degraded",
             message=f"OpenWA session {self.client.session_id} is {status}",
             latency_ms=latency_ms,
         )

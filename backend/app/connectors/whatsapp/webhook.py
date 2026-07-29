@@ -12,6 +12,7 @@ from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     OpenWAQRCodeResponse,
     OpenWASessionStatusResponse,
+    OpenWAStatusWebhookPayload,
     WhatsAppConfigStatusResponse,
     WhatsAppSendRequest,
     WhatsAppSendResponse,
@@ -112,6 +113,39 @@ async def whatsapp_config_status(
         + "/webhooks/whatsapp"
     )
     return await service.config_status(principal, connector_id, webhook_url)
+
+
+@management_router.post(
+    "/status/webhook",
+    response_model=WhatsAppWebhookResponse,
+)
+async def receive_openwa_status_webhook(
+    request: Request,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+) -> WhatsAppWebhookResponse:
+    raw_body = await request.body()
+    if len(raw_body) > get_settings().whatsapp_webhook_max_bytes:
+        raise AppError(
+            413,
+            "WHATSAPP_PAYLOAD_TOO_LARGE",
+            "WhatsApp status webhook payload exceeds the configured size limit.",
+        )
+    try:
+        payload_dict = json.loads(raw_body)
+        if not isinstance(payload_dict, dict):
+            raise ValueError
+        payload = OpenWAStatusWebhookPayload.model_validate(payload_dict)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, ValueError) as exc:
+        raise AppError(
+            422,
+            "WHATSAPP_PAYLOAD_INVALID",
+            "WhatsApp status webhook payload is invalid.",
+        ) from exc
+    return await service.handle_status_webhook(
+        raw_body=raw_body,
+        payload=payload,
+        headers={key.lower(): value for key, value in request.headers.items()},
+    )
 
 
 @management_router.post("/test", response_model=WhatsAppTestResponse)

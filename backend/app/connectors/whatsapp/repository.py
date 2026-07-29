@@ -34,6 +34,7 @@ class WhatsAppRepository:
                 .where(
                     Connector.provider == "whatsapp",
                     or_(
+                        Connector.session_id == session_id,
                         WhatsAppSession.session_id == session_id,
                         WhatsAppSession.session_name == session_id,
                     ),

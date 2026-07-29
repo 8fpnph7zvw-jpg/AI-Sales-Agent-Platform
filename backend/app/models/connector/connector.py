@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import (
@@ -60,6 +60,9 @@ class Connector(
         String(24), nullable=False, default="draft", server_default="draft"
     )
     session_id: Mapped[str | None] = mapped_column(String(64))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    last_connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_disconnect_reason: Mapped[str | None] = mapped_column(Text)
     capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     external_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
     health_status: Mapped[str | None] = mapped_column(String(32))

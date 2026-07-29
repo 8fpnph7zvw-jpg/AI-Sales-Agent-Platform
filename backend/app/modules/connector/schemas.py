@@ -14,6 +14,9 @@ class ConnectorRead(BaseModel):
     name: str
     status: str
     session_id: str | None
+    phone: str | None
+    last_connected_at: datetime | None
+    last_disconnect_reason: str | None
     capabilities: list[str]
     external_account_id: str
     health_status: str | None

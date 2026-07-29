@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,6 +11,8 @@ from app.connectors.base import ConnectorContext
 from app.connectors.registry import connector_registry
 from app.connectors.whatsapp.client import OpenWAClient, WhatsAppConnector
 from app.connectors.whatsapp.schemas import (
+    OpenWASessionStatusResponse,
+    OpenWAStatusWebhookPayload,
     WhatsAppSendRequest,
     WhatsAppWebhookPayload,
     parse_inbound_messages,
@@ -156,6 +159,68 @@ def test_openwa_payload_is_normalized_without_losing_provider_identity() -> None
     assert messages[0].from_number == "15551234567@c.us"
     assert messages[0].display_name == "Enterprise Buyer"
     assert messages[0].text == "Need 500 wireless earphones"
+
+
+@pytest.mark.parametrize("upstream_status", ["ready", "connected", "authenticated"])
+def test_openwa_logged_in_statuses_are_connected(upstream_status: str) -> None:
+    assert OpenWAClient.normalize_status(upstream_status) == "connected"
+    assert OpenWAClient.normalize_status(upstream_status.upper()) == "connected"
+
+
+def test_openwa_waiting_qr_is_only_mapped_from_qr_states() -> None:
+    assert OpenWAClient.normalize_status("waiting_qr") == "waiting_qr"
+    assert OpenWAClient.normalize_status("qr") == "waiting_qr"
+    assert OpenWAClient.normalize_status("authenticated") != "waiting_qr"
+
+
+def test_openwa_status_webhook_payload_and_connector_sync() -> None:
+    payload = OpenWAStatusWebhookPayload.model_validate(
+        {
+            "event": "authenticated",
+            "timestamp": "2026-07-29T10:00:00Z",
+            "sessionId": "6bba5383-bf1f-42ce-945f-c5f8920150b8",
+            "deliveryId": "delivery-1",
+            "status": "connected",
+            "phoneNumber": "15551234567",
+        }
+    )
+    connector = SimpleNamespace(
+        session_id=None,
+        phone=None,
+        status="draft",
+        health_status=None,
+        health_detail=None,
+        last_health_check_at=None,
+        last_connected_at=None,
+        last_disconnect_reason="old disconnect",
+    )
+    whatsapp_session = SimpleNamespace(
+        session_id=None,
+        session_name="tenant-sales",
+        phone=None,
+        status="waiting_qr",
+        last_error=None,
+        session_data=None,
+        qr_code="data:image/png;base64,old",
+        last_connected_at=None,
+    )
+    result = OpenWASessionStatusResponse(
+        session_id=payload.session_id,
+        name=whatsapp_session.session_name,
+        status=OpenWAClient.normalize_status(payload.event),
+        api_key_configured=True,
+        phone_number=payload.phone_number,
+    )
+
+    WhatsAppService._apply_session_status(connector, whatsapp_session, result)
+
+    assert whatsapp_session.status == "connected"
+    assert whatsapp_session.qr_code is None
+    assert connector.status == "active"
+    assert connector.session_id == payload.session_id
+    assert connector.phone == "15551234567"
+    assert connector.last_connected_at is not None
+    assert connector.last_disconnect_reason is None
 
 
 @pytest.mark.asyncio
@@ -484,6 +549,46 @@ async def test_openwa_reconnect_preserves_the_existing_session_id(
     assert SequenceAsyncClient.requests == [
         ("GET", "sessions", None),
         ("POST", f"sessions/{session_id}/reconnect", None),
+    ]
+    assert all(method != "DELETE" for method, _, _ in SequenceAsyncClient.requests)
+
+
+@pytest.mark.asyncio
+async def test_openwa_reconnect_falls_back_to_start_without_deleting_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    session_id = "6bba5383-bf1f-42ce-945f-c5f8920150b8"
+    existing = {
+        "id": session_id,
+        "name": "ai-sales-agent",
+        "status": "disconnected",
+    }
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(200, [existing]),
+        SequenceResponse(404, {"error": "route not found"}),
+        SequenceResponse(202, {**existing, "status": "initializing"}),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.reconnect()
+
+    assert result.session_id == session_id
+    assert result.status == "starting"
+    assert SequenceAsyncClient.requests == [
+        ("GET", "sessions", None),
+        ("POST", f"sessions/{session_id}/reconnect", None),
+        ("POST", f"sessions/{session_id}/start", None),
     ]
     assert all(method != "DELETE" for method, _, _ in SequenceAsyncClient.requests)
 

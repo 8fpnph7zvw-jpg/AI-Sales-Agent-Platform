@@ -157,9 +157,13 @@ export interface Product {
 export interface Connector {
   id: string;
   provider: string;
-  name: string;
-  status: string;
-  capabilities: string[];
+    name: string;
+    status: string;
+    session_id: string | null;
+    phone: string | null;
+    last_connected_at: string | null;
+    last_disconnect_reason: string | null;
+    capabilities: string[];
   external_account_id: string;
   health_status: string | null;
   last_health_check_at: string | null;

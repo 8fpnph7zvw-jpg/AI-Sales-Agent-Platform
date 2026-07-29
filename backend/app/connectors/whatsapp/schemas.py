@@ -39,6 +39,18 @@ class WhatsAppWebhookPayload(BaseModel):
     data: OpenWAMessageData | dict[str, Any]
 
 
+class OpenWAStatusWebhookPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    event: str
+    timestamp: datetime | None = None
+    session_id: str = Field(alias="sessionId")
+    delivery_id: str | None = Field(default=None, alias="deliveryId")
+    status: str | None = None
+    phone_number: str | None = Field(default=None, alias="phoneNumber")
+    reason: str | None = None
+
+
 class WhatsAppInboundMessage(BaseModel):
     message_id: str
     session_id: str

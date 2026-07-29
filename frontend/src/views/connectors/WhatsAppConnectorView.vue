@@ -19,12 +19,17 @@ let pollTimer: number | undefined;
 const canCreateSession = computed(
   () => !status.value?.session_id && status.value?.status !== "starting",
 );
+const isConnected = computed(() =>
+  ["ready", "connected", "authenticated"].includes(
+    (status.value?.status || "").toLowerCase(),
+  ),
+);
 
 const statusMeta = computed(() => {
-  const value = status.value?.status;
-  if (["ready", "connected"].includes(value || "")) return { label: "已连接", type: "success", icon: CircleCheck } as const;
-  if (["qr", "qr_ready", "waiting_qr", "created", "authenticated", "starting", "initializing", "reconnecting"].includes(value || "")) {
-    return { label: ["qr", "qr_ready", "waiting_qr"].includes(value || "") ? "等待扫码" : "正在连接", type: "warning", icon: Warning } as const;
+  const value = (status.value?.status || "").toLowerCase();
+  if (["ready", "connected", "authenticated"].includes(value)) return { label: "Connected", type: "success", icon: CircleCheck } as const;
+  if (["qr", "qr_ready", "waiting_qr", "created", "starting", "initializing", "reconnecting"].includes(value)) {
+    return { label: ["qr", "qr_ready", "waiting_qr"].includes(value) ? "等待扫码" : "正在连接", type: "warning", icon: Warning } as const;
   }
   return { label: "未连接", type: "info", icon: Connection } as const;
 });
@@ -33,7 +38,7 @@ async function refresh(silent = false): Promise<void> {
   if (!silent) loading.value = true;
   try {
     status.value = await getOpenWAStatus();
-    if (["ready", "connected"].includes(status.value.status)) qrDataUrl.value = "";
+    if (["ready", "connected", "authenticated"].includes(status.value.status.toLowerCase())) qrDataUrl.value = "";
     else if (status.value.qr_available && !qrDataUrl.value) {
       const qr = await getOpenWAQRCode();
       qrDataUrl.value = qr.data_url || "";
@@ -78,7 +83,10 @@ async function showQRCode(): Promise<void> {
       qr_available: Boolean(value.data_url),
     };
     qrDataUrl.value = value.data_url || "";
-    if (value.data_url) ElMessage.success("请使用 WhatsApp 扫描二维码");
+    if (["ready", "connected", "authenticated"].includes(value.status.toLowerCase())) {
+      qrDataUrl.value = "";
+      ElMessage.success("WhatsApp Connected");
+    } else if (value.data_url) ElMessage.success("请使用 WhatsApp 扫描二维码");
     else ElMessage.info(value.message);
   } catch (error) {
     ElMessage.warning(getApiErrorMessage(error));
@@ -93,10 +101,14 @@ async function reconnect(): Promise<void> {
   try {
     qrDataUrl.value = "";
     status.value = await reconnectOpenWA();
-    const value = await getOpenWAQRCode();
-    qrDataUrl.value = value.data_url || "";
-    if (value.data_url) ElMessage.success("已重新创建 Session，请使用 WhatsApp 扫描二维码");
-    else ElMessage.info(value.message);
+    if (isConnected.value) {
+      ElMessage.success("WhatsApp Connected");
+    } else {
+      const value = await getOpenWAQRCode();
+      qrDataUrl.value = value.data_url || "";
+      if (value.data_url) ElMessage.success("Session 已重新启动，请使用 WhatsApp 扫描二维码");
+      else ElMessage.info(value.message);
+    }
   } catch (error) {
     ElMessage.error(getApiErrorMessage(error));
   } finally {
@@ -149,7 +161,12 @@ onUnmounted(() => window.clearInterval(pollTimer));
 
       <el-card class="qr-card" shadow="never">
         <template #header><strong>手机扫码登录</strong></template>
-        <div v-if="qrDataUrl" class="qr-stage">
+        <div v-if="isConnected" class="qr-empty">
+          <el-icon color="#16a34a"><CircleCheck /></el-icon>
+          <h3>Connected</h3>
+          <p>WhatsApp session is authenticated and ready.</p>
+        </div>
+        <div v-else-if="qrDataUrl" class="qr-stage">
           <img :src="qrDataUrl" alt="WhatsApp 登录二维码" />
           <p>二维码会定期刷新，请尽快完成扫描</p>
         </div>
