@@ -3,7 +3,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from app.api.dependencies.auth import Principal, get_current_principal
 from app.main import create_app
+from app.modules.ai_agent.router import get_ai_agent_service
+from app.modules.ai_agent.schemas import AgentChatResponse, AgentUsage
 
 EXPECTED_OPERATIONS = {
     ("/api/v1/auth/login", "post"),
@@ -64,6 +67,61 @@ async def test_liveness_endpoint_is_public() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_agent_chat_endpoint_returns_200() -> None:
+    app = create_app()
+
+    class FakeAgentService:
+        async def chat(self, principal, payload) -> AgentChatResponse:
+            assert principal.tenant_id == 1
+            assert payload.query == "风衣"
+            return AgentChatResponse(
+                run_id="01ARZ3NDEKTSV4RRFFQ69G5FA1",
+                conversation_id=payload.conversation_id,
+                message_id="01ARZ3NDEKTSV4RRFFQ69G5FA2",
+                answer="推荐经典风衣",
+                dify_conversation_id="dify-conversation",
+                citations=[],
+                usage=AgentUsage(
+                    prompt_tokens=8,
+                    completion_tokens=6,
+                    cost_amount=None,
+                    cost_currency=None,
+                    latency_ms=120,
+                ),
+            )
+
+    async def principal_override() -> Principal:
+        return Principal(
+            user_id=1,
+            user_public_id="01ARZ3NDEKTSV4RRFFQ69G5FA3",
+            tenant_id=1,
+            tenant_public_id="01ARZ3NDEKTSV4RRFFQ69G5FA4",
+            permissions=frozenset({"ai_agent.chat"}),
+        )
+
+    async def service_override() -> FakeAgentService:
+        return FakeAgentService()
+
+    app.dependency_overrides[get_current_principal] = principal_override
+    app.dependency_overrides[get_ai_agent_service] = service_override
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/v1/agent/chat",
+            json={
+                "conversation_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "query": "风衣",
+                "idempotency_key": "agent-chat-test-001",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "推荐经典风衣"
 
 
 @pytest.mark.asyncio

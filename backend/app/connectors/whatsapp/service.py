@@ -787,17 +787,9 @@ class WhatsAppService:
         try:
             dify_result = await self.dify.chat(
                 query=self._text(envelope),
-                user=(
-                    f"tenant:{runtime.tenant.public_id}:"
-                    f"customer:{customer.public_id}"
-                ),
-                conversation_id=await self.repository.latest_dify_conversation_id(
-                    conversation.id
-                ),
-                inputs={
-                    "channel": "whatsapp",
-                    "customer_id": customer.public_id,
-                },
+                user=customer.public_id,
+                conversation_id=None,
+                inputs={},
             )
         except Exception as exc:
             run.status = "failed"

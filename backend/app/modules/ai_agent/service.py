@@ -76,7 +76,7 @@ class AiAgentService:
             source="admin_test",
             message_type="text",
             content_text=payload.query,
-            content_json={"inputs": payload.inputs} if payload.inputs else None,
+            content_json=None,
             idempotency_key=payload.idempotency_key,
             status="received",
             created_at=now,
@@ -92,20 +92,19 @@ class AiAgentService:
             status="running",
             input_redacted={
                 "query_length": len(payload.query),
-                "input_keys": sorted(payload.inputs),
+                "input_keys": [],
             },
             started_at=now,
         )
         self.repository.add(run)
         await self.session.commit()
 
-        dify_conversation_id = await self.repository.latest_dify_conversation_id(conversation.id)
         try:
             result = await self.dify.chat(
                 query=payload.query,
-                user=f"tenant:{principal.tenant_public_id}:customer:{customer_public_id}",
-                conversation_id=dify_conversation_id,
-                inputs=payload.inputs,
+                user=customer_public_id,
+                conversation_id=None,
+                inputs={},
             )
         except Exception as exc:
             run.status = "failed"

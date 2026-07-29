@@ -74,6 +74,23 @@ class UnauthorizedAsyncClient(FakeAsyncClient):
         return httpx.Response(401, request=request, json={"message": "Unauthorized"})
 
 
+class BadRequestAsyncClient(FakeAsyncClient):
+    async def post(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        del json, headers
+        request = httpx.Request("POST", f"https://api.dify.ai/v1/{path}")
+        return httpx.Response(
+            400,
+            request=request,
+            json={"code": "invalid_param", "message": "unexpected inputs"},
+        )
+
+
 @pytest.mark.asyncio
 async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) -> None:
     monkeypatch.setattr("app.integrations.dify.client.httpx.AsyncClient", FakeAsyncClient)
@@ -96,7 +113,13 @@ async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) 
         "Authorization": "Bearer server-only-key",
         "Content-Type": "application/json",
     }
-    assert FakeAsyncClient.request_json["response_mode"] == "blocking"
+    assert FakeAsyncClient.request_json == {
+        "inputs": {},
+        "query": "Need 500 units",
+        "response_mode": "blocking",
+        "conversation_id": "",
+        "user": "tenant:t:customer:c",
+    }
     assert result.answer == "Enterprise response"
     assert result.prompt_tokens == 10
     assert result.latency_ms == 250
@@ -146,3 +169,32 @@ async def test_dify_dataset_key_is_rejected_before_chat_request() -> None:
         )
 
     assert "Dataset/Knowledge" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_dify_400_logs_status_and_response_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        "app.integrations.dify.client.httpx.AsyncClient",
+        BadRequestAsyncClient,
+    )
+    client = DifyClient(
+        Settings(
+            _env_file=None,
+            dify_api_base_url="https://api.dify.ai/v1",
+            dify_api_key="app-test-key",
+        )
+    )
+
+    with pytest.raises(UpstreamServiceError):
+        await client.chat(
+            query="风衣",
+            user="customer-id",
+            conversation_id="old-conversation-id",
+            inputs={"customer_message": "风衣"},
+        )
+
+    assert "status_code=400" in caplog.text
+    assert "unexpected inputs" in caplog.text

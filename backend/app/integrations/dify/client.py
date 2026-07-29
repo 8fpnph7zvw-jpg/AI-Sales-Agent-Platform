@@ -49,10 +49,10 @@ class DifyClient:
             )
 
         payload = {
-            "inputs": inputs,
+            "inputs": {},
             "query": query,
             "response_mode": "blocking",
-            "conversation_id": conversation_id or "",
+            "conversation_id": "",
             "user": user,
         }
         headers = {
@@ -62,10 +62,12 @@ class DifyClient:
         base_url = self.settings.dify_api_base_url.rstrip("/") + "/"
         logger.info(
             "dify_chat_request url=%schat-messages user=%s "
-            "query_length=%s conversation_id_present=%s",
+            "query_length=%s ignored_input_keys=%s "
+            "ignored_conversation_id=%s",
             base_url,
             user,
             len(query),
+            sorted(inputs),
             bool(conversation_id),
         )
         try:
@@ -78,6 +80,12 @@ class DifyClient:
         except httpx.TimeoutException as exc:
             raise UpstreamServiceError("Dify", "request timed out") from exc
         except httpx.HTTPStatusError as exc:
+            response_text = exc.response.text
+            logger.error(
+                "Dify API error:\nstatus_code=%s\nresponse.text=%s",
+                exc.response.status_code,
+                response_text[:4000],
+            )
             if exc.response.status_code == 401:
                 raise UpstreamServiceError(
                     "Dify",
@@ -87,7 +95,10 @@ class DifyClient:
                 ) from exc
             raise UpstreamServiceError(
                 "Dify",
-                f"returned HTTP {exc.response.status_code}",
+                (
+                    f"returned HTTP {exc.response.status_code}: "
+                    f"{response_text[:1000]}"
+                ),
             ) from exc
         except httpx.HTTPError as exc:
             raise UpstreamServiceError("Dify", "request failed") from exc
