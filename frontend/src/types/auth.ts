@@ -14,13 +14,17 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   access_token: string;
+  refresh_token: string;
   token_type: "bearer";
   expires_in: number;
+  refresh_expires_in: number;
   user: AuthUser;
 }
 
 export interface AuthSession {
   token: string;
+  refreshToken: string;
   expiresAt: number;
+  refreshExpiresAt: number;
   user: AuthUser;
 }

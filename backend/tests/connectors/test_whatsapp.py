@@ -451,6 +451,44 @@ async def test_openwa_qrcode_returns_friendly_starting_state_when_not_ready(
 
 
 @pytest.mark.asyncio
+async def test_openwa_reconnect_preserves_the_existing_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.connectors.whatsapp.client.httpx.AsyncClient",
+        SequenceAsyncClient,
+    )
+    session_id = "6b1d329f-ba60-4eda-b28a-6116d70f9b35"
+    existing = {
+        "id": session_id,
+        "name": "ai-sales-agent",
+        "status": "disconnected",
+    }
+    SequenceAsyncClient.requests = []
+    SequenceAsyncClient.responses = [
+        SequenceResponse(200, [existing]),
+        SequenceResponse(202, {**existing, "status": "reconnecting"}),
+    ]
+    client = OpenWAClient(
+        Settings(
+            _env_file=None,
+            openwa_api_key="server-only-key",
+            openwa_session_name="ai-sales-agent",
+        )
+    )
+
+    result = await client.reconnect()
+
+    assert result.session_id == session_id
+    assert result.status == "starting"
+    assert SequenceAsyncClient.requests == [
+        ("GET", "sessions", None),
+        ("POST", f"sessions/{session_id}/reconnect", None),
+    ]
+    assert all(method != "DELETE" for method, _, _ in SequenceAsyncClient.requests)
+
+
+@pytest.mark.asyncio
 async def test_openwa_delete_session_is_idempotent_and_uses_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

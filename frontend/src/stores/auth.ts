@@ -1,7 +1,11 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
-import { getCurrentUser, login as loginRequest } from "@/api/auth";
+import {
+  getCurrentUser,
+  login as loginRequest,
+  revokeRefreshToken,
+} from "@/api/auth";
 import type { AuthSession, AuthUser, LoginRequest } from "@/types/auth";
 import {
   clearAuthSession,
@@ -14,12 +18,20 @@ export const useAuthStore = defineStore("auth", () => {
   const initial = readAuthSession();
   const token = ref<string | null>(initial?.token ?? null);
   const expiresAt = ref<number | null>(initial?.expiresAt ?? null);
+  const refreshToken = ref<string | null>(initial?.refreshToken ?? null);
+  const refreshExpiresAt = ref<number | null>(initial?.refreshExpiresAt ?? null);
   const user = ref<AuthUser | null>(initial?.user ?? null);
   let sessionValidated = false;
   let validationRequest: Promise<void> | null = null;
 
   const isAuthenticated = computed(
-    () => Boolean(token.value && user.value && (expiresAt.value ?? 0) > Date.now()),
+    () =>
+      Boolean(
+        token.value &&
+          refreshToken.value &&
+          user.value &&
+          (refreshExpiresAt.value ?? 0) > Date.now(),
+      ),
   );
   const permissionSet = computed(() => new Set(user.value?.permissions ?? []));
 
@@ -35,11 +47,15 @@ export const useAuthStore = defineStore("auth", () => {
     const response = await loginRequest(payload);
     const session: AuthSession = {
       token: response.access_token,
+      refreshToken: response.refresh_token,
       expiresAt: Date.now() + response.expires_in * 1000,
+      refreshExpiresAt: Date.now() + response.refresh_expires_in * 1000,
       user: response.user,
     };
     token.value = session.token;
+    refreshToken.value = session.refreshToken;
     expiresAt.value = session.expiresAt;
+    refreshExpiresAt.value = session.refreshExpiresAt;
     user.value = session.user;
     writeAuthSession(session, remember);
     sessionValidated = true;
@@ -56,7 +72,9 @@ export const useAuthStore = defineStore("auth", () => {
         writeAuthSession(
           {
             token: token.value as string,
+            refreshToken: refreshToken.value as string,
             expiresAt: expiresAt.value as number,
+            refreshExpiresAt: refreshExpiresAt.value as number,
             user: currentUser,
           },
           isAuthSessionRemembered(),
@@ -75,16 +93,31 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   function logout(): void {
+    const currentRefreshToken = refreshToken.value;
     token.value = null;
+    refreshToken.value = null;
     expiresAt.value = null;
+    refreshExpiresAt.value = null;
     user.value = null;
     clearAuthSession();
+    if (currentRefreshToken) void revokeRefreshToken(currentRefreshToken).catch(() => undefined);
   }
+
+  window.addEventListener("auth:refreshed", (event) => {
+    const session = (event as CustomEvent<AuthSession>).detail;
+    if (!session) return;
+    token.value = session.token;
+    refreshToken.value = session.refreshToken;
+    expiresAt.value = session.expiresAt;
+    refreshExpiresAt.value = session.refreshExpiresAt;
+    user.value = session.user;
+  });
 
   return {
     token,
     user,
     expiresAt,
+    refreshExpiresAt,
     isAuthenticated,
     permissionSet,
     canAny,

@@ -183,6 +183,7 @@ CREATE TABLE connectors (
     provider VARCHAR(64) NOT NULL,
     name VARCHAR(120) NOT NULL,
     status VARCHAR(24) NOT NULL DEFAULT 'draft',
+    session_id VARCHAR(64) NULL,
     capabilities JSON NOT NULL,
     external_account_id VARCHAR(255) NOT NULL,
     health_status VARCHAR(32) NULL,
@@ -194,6 +195,8 @@ CREATE TABLE connectors (
     deleted_at DATETIME(6) NULL,
     CONSTRAINT pk_connectors PRIMARY KEY (id),
     CONSTRAINT uq_connectors_public_id UNIQUE (public_id),
+    CONSTRAINT uq_connectors_openwa_session UNIQUE (session_id),
+    CONSTRAINT uq_connectors_id_tenant UNIQUE (id, tenant_id),
     CONSTRAINT tenant_provider_account
         UNIQUE (tenant_id, provider, external_account_id),
     CONSTRAINT ck_connectors_status_allowed
@@ -216,6 +219,8 @@ CREATE TABLE whatsapp_sessions (
     status VARCHAR(24) NOT NULL DEFAULT 'created',
     qr_code MEDIUMTEXT NULL,
     last_connected_at DATETIME(6) NULL,
+    last_error TEXT NULL,
+    session_data JSON NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CONSTRAINT pk_whatsapp_sessions PRIMARY KEY (id),
@@ -226,8 +231,9 @@ CREATE TABLE whatsapp_sessions (
         CHECK (status IN ('created', 'starting', 'waiting_qr', 'connected', 'disconnected', 'error')),
     CONSTRAINT fk_whatsapp_sessions_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
-    CONSTRAINT fk_whatsapp_sessions_connector_id_connectors
-        FOREIGN KEY (connector_id) REFERENCES connectors (id) ON DELETE CASCADE,
+    CONSTRAINT fk_whatsapp_sessions_connector_tenant
+        FOREIGN KEY (connector_id, tenant_id)
+        REFERENCES connectors (id, tenant_id) ON DELETE CASCADE,
     INDEX ix_whatsapp_sessions_tenant_status (tenant_id, status),
     INDEX ix_whatsapp_sessions_tenant_connector (tenant_id, connector_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -44,6 +46,7 @@ class SecurityManager:
             "sub": user_public_id,
             "tid": tenant_public_id,
             "type": "access",
+            "jti": secrets.token_urlsafe(16),
             "iat": now,
             "nbf": now,
             "exp": expires_at,
@@ -52,6 +55,21 @@ class SecurityManager:
         }
         token = jwt.encode(payload, secret, algorithm=self.settings.jwt_algorithm)
         return token, int((expires_at - now).total_seconds())
+
+    def create_refresh_token(self) -> tuple[str, str, datetime, int]:
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(days=self.settings.refresh_token_expire_days)
+        token = secrets.token_urlsafe(48)
+        return (
+            token,
+            self.hash_refresh_token(token),
+            expires_at,
+            int((expires_at - now).total_seconds()),
+        )
+
+    @staticmethod
+    def hash_refresh_token(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def decode_access_token(self, token: str) -> TokenClaims:
         try:

@@ -27,6 +27,16 @@ class LoginUser(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    refresh_expires_in: int
     user: LoginUser
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
+
+
+class LogoutRequest(RefreshTokenRequest):
+    pass

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +44,12 @@ class WhatsAppSession(BigIntPrimaryKeyMixin, TimestampMixin, Base):
             "('created','starting','waiting_qr','connected','disconnected','error')",
             name="status_allowed",
         ),
+        ForeignKeyConstraint(
+            ["connector_id", "tenant_id"],
+            ["connectors.id", "connectors.tenant_id"],
+            ondelete="CASCADE",
+            name="fk_whatsapp_sessions_connector_tenant",
+        ),
         Index("ix_whatsapp_sessions_tenant_status", "tenant_id", "status"),
         Index("ix_whatsapp_sessions_tenant_connector", "tenant_id", "connector_id"),
     )
@@ -46,7 +61,6 @@ class WhatsAppSession(BigIntPrimaryKeyMixin, TimestampMixin, Base):
     )
     connector_id: Mapped[int] = mapped_column(
         BIGINT_UNSIGNED,
-        ForeignKey("connectors.id", ondelete="CASCADE"),
         nullable=False,
     )
     session_id: Mapped[str | None] = mapped_column(String(64))
@@ -60,6 +74,13 @@ class WhatsAppSession(BigIntPrimaryKeyMixin, TimestampMixin, Base):
     )
     qr_code: Mapped[str | None] = mapped_column(mysql.MEDIUMTEXT())
     last_connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    last_error: Mapped[str | None] = mapped_column(Text())
+    session_data: Mapped[dict[str, object] | None] = mapped_column(JSON)
 
-    tenant = relationship("Tenant", lazy="raise")
-    connector = relationship("Connector", back_populates="whatsapp_session", lazy="raise")
+    tenant = relationship("Tenant", lazy="raise", overlaps="connector,whatsapp_session")
+    connector = relationship(
+        "Connector",
+        back_populates="whatsapp_session",
+        lazy="raise",
+        overlaps="tenant",
+    )

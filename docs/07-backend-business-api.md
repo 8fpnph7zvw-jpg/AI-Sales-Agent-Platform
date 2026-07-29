@@ -20,7 +20,9 @@ Router 不直接查询数据库，不直接调用 Dify，也不计算报价或�
 
 | 方法 | 路径 | 权限 | 主要行为 |
 |---|---|---|---|
-| POST | `/auth/login` | Public | 多租户登录并签发短期 JWT |
+| POST | `/auth/login` | Public | 多租户登录并签发 24 小时 JWT 与 Refresh Token |
+| POST | `/auth/refresh` | Refresh Token | 轮换 Refresh Token 并签发新 JWT |
+| POST | `/auth/logout` | Refresh Token | 撤销当前 Refresh Token |
 | GET | `/customers` | `customer.read_*` | 租户隔离客户列表 |
 | POST | `/customers` | `customer.create` | 创建并默认分配给当前销售 |
 | POST | `/conversation/message` | `message.send` | 幂等写消息并创建 Connector Outbox |
@@ -43,7 +45,10 @@ Router 不直接查询数据库，不直接调用 Dify，也不计算报价或�
 }
 ```
 
-邮箱只在租户内唯一，因此登录必须提供 `tenant_slug`。密码用 Argon2id 校验；Access Token 包含用户和租户公共 ID、issuer、audience、签发时间和过期时间。每个受保护请求都会重新从数据库解析有效用户、有效租户和 RBAC 权限。
+邮箱只在租户内唯一，因此登录必须提供 `tenant_slug`。密码用 Argon2id 校验；Access Token
+包含用户和租户公共 ID、issuer、audience、签发时间和过期时间，默认有效期 24 小时。
+Refresh Token 默认有效 30 天，数据库只保存哈希且每次刷新都会轮换。每个受保护请求都会
+重新从数据库解析有效用户、有效租户和 RBAC 权限。
 
 生产必须配置至少 32 个随机字符的 `JWT_SECRET`。Token 和 Dify API Key 不进入前端构建变量。
 

@@ -15,9 +15,9 @@
 
 推荐模式：
 
-- Access Token：短期 JWT（建议 10–15 分钟），前端仅内存保存。
-- Refresh Token：随机不透明 Token，使用 `HttpOnly; Secure; SameSite=Lax` Cookie，服务端只保存哈希。
-- Refresh Token 每次使用都轮换；检测旧 Token 复用时撤销整个 Token Family。
+- Access Token：24 小时 JWT，由 `ACCESS_TOKEN_EXPIRE_MINUTES=1440` 控制。
+- Refresh Token：30 天随机不透明 Token，服务端只保存 SHA-256 哈希。
+- Refresh Token 通过请求体提交并在每次使用时轮换；前端收到 401 时先刷新并重放原请求。
 - 所有请求由 Token 推导用户、租户和权限，忽略客户端伪造的租户头。
 
 认证接口：
@@ -25,8 +25,8 @@
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/auth/login` | Public | 登录，受 IP/账号双维度限流 |
-| POST | `/auth/refresh` | Refresh Cookie | 轮换会话 |
-| POST | `/auth/logout` | Authenticated | 撤销当前会话 |
+| POST | `/auth/refresh` | Refresh Token | 轮换会话 |
+| POST | `/auth/logout` | Refresh Token | 撤销当前会话 |
 | POST | `/auth/logout-all` | Authenticated | 撤销用户所有会话 |
 | GET | `/auth/me` | Authenticated | 当前用户、租户、角色、权限 |
 | GET | `/auth/sessions` | Authenticated | 设备会话列表 |

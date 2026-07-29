@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "ai-sales-agent-platform"
     jwt_audience: str = "ai-sales-agent-api"
-    access_token_expire_minutes: int = 15
+    access_token_expire_minutes: int = 24 * 60
+    refresh_token_expire_days: int = 30
     dify_api_base_url: str = "https://api.dify.ai/v1"
     dify_api_key: str = ""
     dify_timeout_seconds: float = 30.0

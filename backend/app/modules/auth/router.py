@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, get_current_principal
@@ -8,7 +8,13 @@ from app.core.config import get_settings
 from app.core.security import SecurityManager
 from app.db.session import get_db
 from app.modules.auth.repository import AuthRepository
-from app.modules.auth.schemas import LoginRequest, LoginResponse, LoginUser
+from app.modules.auth.schemas import (
+    LoginRequest,
+    LoginResponse,
+    LoginUser,
+    LogoutRequest,
+    RefreshTokenRequest,
+)
 from app.modules.auth.service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -30,6 +36,23 @@ async def login(
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> LoginResponse:
     return await service.login(payload)
+
+
+@router.post("/refresh", response_model=LoginResponse)
+async def refresh_token(
+    payload: RefreshTokenRequest,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> LoginResponse:
+    return await service.refresh(payload)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    payload: LogoutRequest,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> Response:
+    await service.logout(payload)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=LoginUser)

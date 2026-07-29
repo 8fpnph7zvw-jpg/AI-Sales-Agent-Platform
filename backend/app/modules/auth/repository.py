@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.auth.auth_session import AuthSession
 from app.models.auth.permission import Permission
 from app.models.auth.role import Role
 from app.models.auth.role_permission import RolePermission
@@ -67,3 +68,29 @@ class AuthRepository:
             .distinct()
         )
         return set((await self.session.scalars(statement)).all())
+
+    def add_auth_session(self, auth_session: AuthSession) -> None:
+        self.session.add(auth_session)
+
+    async def get_refresh_session(
+        self,
+        refresh_token_hash: str,
+    ) -> tuple[AuthSession, User, Tenant] | None:
+        statement = (
+            select(AuthSession, User, Tenant)
+            .join(
+                User,
+                (User.id == AuthSession.user_id)
+                & (User.tenant_id == AuthSession.tenant_id),
+            )
+            .join(Tenant, Tenant.id == AuthSession.tenant_id)
+            .where(
+                AuthSession.refresh_token_hash == refresh_token_hash,
+                AuthSession.revoked_at.is_(None),
+                User.deleted_at.is_(None),
+                Tenant.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        row = (await self.session.execute(statement)).one_or_none()
+        return (row[0], row[1], row[2]) if row else None

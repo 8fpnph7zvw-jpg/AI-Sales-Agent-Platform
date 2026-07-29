@@ -49,8 +49,10 @@ STARTABLE_OPENWA_STATUSES = {"created", "disconnected", "failed"}
 OPENWA_STATUS_MAP = {
     "created": "created",
     "starting": "starting",
+    "reconnecting": "starting",
     "initializing": "starting",
     "authenticating": "starting",
+    "authenticated": "starting",
     "qr": "waiting_qr",
     "qr_ready": "waiting_qr",
     "ready": "connected",
@@ -228,8 +230,20 @@ class OpenWAClient:
         )
 
     async def reconnect(self) -> OpenWASessionStatusResponse:
-        await self.delete_session()
-        return await self.ensure_session_started()
+        value = await self._find_session()
+        if value is None:
+            return await self.ensure_session_started()
+        response = await self._request(
+            "POST",
+            f"sessions/{self._required_session_id()}/reconnect",
+            allowed_statuses={202, 409},
+        )
+        if response.status_code == 409:
+            current = await self._refresh_session()
+            return self._session_response(current or value)
+        restarted = dict(response.json())
+        self._capture_identity(restarted)
+        return self._session_response(restarted)
 
     async def send_text(self, recipient: str, text: str) -> WhatsAppSendResponse:
         value = await self._find_session()
@@ -324,6 +338,12 @@ class OpenWAClient:
                 or status == "waiting_qr"
             ),
             phone_number=value.get("phoneNumber") or value.get("phone"),
+            last_error=value.get("lastError") or value.get("last_error"),
+            session_data=(
+                dict(value["sessionData"])
+                if isinstance(value.get("sessionData"), dict)
+                else None
+            ),
         )
 
     @staticmethod

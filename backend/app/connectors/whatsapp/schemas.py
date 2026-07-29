@@ -90,6 +90,8 @@ class OpenWASessionStatusResponse(BaseModel):
     api_key_configured: bool
     qr_available: bool = False
     phone_number: str | None = None
+    last_error: str | None = None
+    session_data: dict[str, Any] | None = None
 
 
 class OpenWAQRCodeResponse(BaseModel):

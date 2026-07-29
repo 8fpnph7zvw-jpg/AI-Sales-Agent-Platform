@@ -13,6 +13,7 @@ class ConnectorRead(BaseModel):
     provider: str
     name: str
     status: str
+    session_id: str | None
     capabilities: list[str]
     external_account_id: str
     health_status: str | None

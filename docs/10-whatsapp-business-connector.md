@@ -79,12 +79,19 @@ Session 已由 `openwa-init` 自动创建。进入 Dashboard，启动
 `ai-sales-agent` Session 并扫描 QR；状态应变为 `ready`。真实 Session UUID
 已自动写入 `.env` 的 `OPENWA_SESSION`。
 
+Session UUID 同时作为 `LocalAuth.clientId`，认证目录持久化在 `openwa_data` 卷。
+浏览器或页面崩溃时服务会保留 UUID 与目录并退避重连，不会删除后重新创建 Session。
+网络持续不可用时重试不会耗尽：间隔从 5 秒递增并封顶为 60 秒；网络恢复后自动继续初始化、
+消息监听和 webhook 投递。
+`whatsapp-web.js` 不固定 `webVersion`，运行时跟随 WhatsApp Web 当前版本；依赖版本使用
+兼容范围并由 `package-lock.json` 保证构建可复现。
+
 ## 注册 Webhook
 
 OpenWA 在 Docker 网络中直接回调 Backend。`openwa-init` 自动注册或更新：
 
 - URL：`http://backend:8000/api/v1/webhooks/whatsapp`
-- Event：`message.received`
+- Event：`message.received`、`message.sent`
 - HMAC secret：自动生成的真实 OpenWA API Key
 
 FastAPI 使用运行时注入的同一密钥校验 `X-OpenWA-Signature`。Compose 已设置
@@ -109,7 +116,9 @@ curl -X POST http://localhost/api/v1/connectors/config \
 ```
 
 在管理后台执行现有连接检查后 Connector 变为 `active`。Webhook 使用 `sessionId` 定位对应租户，
-因此一个 OpenWA Session 只能绑定到一个激活的租户 Connector。
+因此一个 OpenWA Session 只能绑定到一个租户 Connector。数据库永久保存
+`tenant_id + connector_id + session_id` 绑定，并在 Connector 上保留可直接查询的
+`session_id` 镜像；不同企业不能共享同一个 OpenWA Session。
 
 ## 发送消息接口
 
@@ -139,7 +148,8 @@ curl http://localhost/health/live
 
 从真实 WhatsApp 号码向已连接号码发送消息后，应看到：
 
-1. OpenWA 投递 `message.received` Webhook。
+1. OpenWA 的 `message` 事件投递 `message.received`，`message_create` 事件投递
+   `message.sent` Webhook。
 2. FastAPI 验签并按 OpenWA idempotency key 去重。
 3. Customer、CustomerSession、Conversation、Inbound Message 和 WebhookLog 落库。
 4. FastAPI 调用 Dify；Dify 使用现有知识库/RAG 生成回答。
@@ -151,8 +161,7 @@ Meta 官方 WhatsApp Cloud API。
 
 ## 管理后台登录恢复
 
-勾选“记住我”后，管理后台仅长期保存 JWT、企业标识和邮箱，密码仍交由浏览器
+勾选“记住我”后，管理后台保存 Access/Refresh Token、企业标识和邮箱，密码仍交由浏览器
 Password Manager 管理。刷新或重新打开浏览器时，前端调用 `GET /api/v1/auth/me`
-向服务端重新确认账号状态并刷新用户权限；Token 过期、账号停用或租户停用时才清除
-登录状态。临时网络中断不会删除仍在有效期内的本地会话，网络恢复后的下一次路由
-导航会自动再次验证。
+向服务端重新确认账号状态并刷新用户权限；接口返回 401 时先调用 `/auth/refresh`
+轮换 Token 并重放原请求，只有刷新失败、账号停用或租户停用时才清除登录状态。

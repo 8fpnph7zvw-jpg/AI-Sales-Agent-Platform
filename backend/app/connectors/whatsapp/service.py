@@ -132,8 +132,16 @@ class WhatsAppService:
             session_id=client.session_id,
         )
         whatsapp_session.session_id = client.session_id
+        connector.session_id = client.session_id
         whatsapp_session.session_name = client.session_name
         whatsapp_session.status = result.status
+        whatsapp_session.session_data = {
+            **(whatsapp_session.session_data or {}),
+            "openwa_session_id": client.session_id,
+            "session_name": client.session_name,
+            "status": result.status,
+            "observed_at": datetime.now(UTC).isoformat(),
+        }
         if result.data_url:
             whatsapp_session.qr_code = result.data_url
         elif result.status in {"connected", "disconnected", "error"}:
@@ -166,6 +174,9 @@ class WhatsAppService:
         whatsapp_session.session_id = None
         whatsapp_session.status = "disconnected"
         whatsapp_session.qr_code = None
+        whatsapp_session.last_error = None
+        whatsapp_session.session_data = None
+        connector.session_id = None
         connector.status = "draft"
         connector.health_status = None
         await self.session.commit()
@@ -249,11 +260,12 @@ class WhatsAppService:
             await self._assert_unclaimed(
                 connector,
                 session_name=session_name,
-                session_id=None,
+                session_id=connector.session_id,
             )
             whatsapp_session = WhatsAppSession(
                 tenant_id=principal.tenant_id,
                 connector_id=connector.id,
+                session_id=connector.session_id,
                 session_name=session_name,
                 status="created",
             )
@@ -276,6 +288,19 @@ class WhatsAppService:
                 session_id=None,
             )
             whatsapp_session.session_name = session_name
+        if connector.session_id and whatsapp_session.session_id is None:
+            whatsapp_session.session_id = connector.session_id
+        elif whatsapp_session.session_id and connector.session_id is None:
+            connector.session_id = whatsapp_session.session_id
+        elif (
+            connector.session_id
+            and whatsapp_session.session_id
+            and connector.session_id != whatsapp_session.session_id
+        ):
+            raise ConflictError(
+                "WHATSAPP_SESSION_BINDING_MISMATCH",
+                "Connector and WhatsApp session bindings do not match.",
+            )
         return connector, tenant, whatsapp_session
 
     async def _desired_session_name(self, connector: Connector) -> str:
@@ -332,13 +357,24 @@ class WhatsAppService:
     ) -> None:
         if result.session_id:
             whatsapp_session.session_id = result.session_id
+            connector.session_id = result.session_id
         if result.name:
             whatsapp_session.session_name = result.name
         whatsapp_session.phone = result.phone_number
         whatsapp_session.status = result.status
+        whatsapp_session.last_error = result.last_error
+        whatsapp_session.session_data = {
+            **(result.session_data or {}),
+            "openwa_session_id": whatsapp_session.session_id,
+            "session_name": whatsapp_session.session_name,
+            "phone": result.phone_number,
+            "status": result.status,
+            "observed_at": datetime.now(UTC).isoformat(),
+        }
         if result.status == "connected":
             whatsapp_session.qr_code = None
             whatsapp_session.last_connected_at = datetime.now(UTC)
+            whatsapp_session.last_error = None
             connector.status = "active"
             connector.health_status = "healthy"
             connector.health_detail = {"message": "WhatsApp session is connected."}
@@ -346,7 +382,9 @@ class WhatsAppService:
             whatsapp_session.qr_code = None
             connector.status = "error"
             connector.health_status = "unhealthy"
-            connector.health_detail = {"message": "OpenWA session reported an error."}
+            connector.health_detail = {
+                "message": result.last_error or "OpenWA session reported an error."
+            }
         else:
             connector.status = "draft"
             connector.health_status = "degraded"
@@ -457,11 +495,35 @@ class WhatsAppService:
                 headers.get("x-request-id"),
             )
             raise
-        if payload.event != "message.received":
+        if payload.event not in {"message.received", "message.sent"}:
             return WhatsAppWebhookResponse(status="ignored")
         context = await self.repository.get_connector_by_session(payload.session_id)
         if context is None:
             raise ResourceNotFoundError("Active WhatsApp connector")
+        whatsapp_session = await self.repository.get_whatsapp_session(
+            context[0].tenant_id,
+            context[0].id,
+            for_update=True,
+        )
+        if whatsapp_session is None:
+            raise ResourceNotFoundError("Tenant WhatsApp session")
+        now = datetime.now(UTC)
+        whatsapp_session.status = "connected"
+        whatsapp_session.last_connected_at = now
+        whatsapp_session.last_error = None
+        whatsapp_session.session_data = {
+            **(whatsapp_session.session_data or {}),
+            "last_webhook_event": payload.event,
+            "last_webhook_at": now.isoformat(),
+            "last_delivery_id": payload.delivery_id,
+        }
+        context[0].status = "active"
+        context[0].health_status = "healthy"
+        context[0].health_detail = {"message": "WhatsApp webhook is active."}
+        context[0].last_health_check_at = now
+        if payload.event == "message.sent":
+            await self.session.commit()
+            return WhatsAppWebhookResponse(status="accepted")
         runtime = await self._runtime(*context)
         envelopes = await runtime.adapter.normalize_inbound(payload_dict, headers)
         response = WhatsAppWebhookResponse()

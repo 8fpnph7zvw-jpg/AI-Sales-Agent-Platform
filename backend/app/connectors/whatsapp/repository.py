@@ -37,7 +37,7 @@ class WhatsAppRepository:
                         WhatsAppSession.session_id == session_id,
                         WhatsAppSession.session_name == session_id,
                     ),
-                    Connector.status == "active",
+                    Connector.status != "disabled",
                     Connector.deleted_at.is_(None),
                     Tenant.status == "active",
                     Tenant.deleted_at.is_(None),

@@ -32,6 +32,15 @@ class Connector(
             "external_account_id",
             name="tenant_provider_account",
         ),
+        UniqueConstraint(
+            "session_id",
+            name="uq_connectors_openwa_session",
+        ),
+        UniqueConstraint(
+            "id",
+            "tenant_id",
+            name="uq_connectors_id_tenant",
+        ),
         CheckConstraint(
             "status IN ('draft','active','disabled','error')",
             name="status_allowed",
@@ -50,6 +59,7 @@ class Connector(
     status: Mapped[str] = mapped_column(
         String(24), nullable=False, default="draft", server_default="draft"
     )
+    session_id: Mapped[str | None] = mapped_column(String(64))
     capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     external_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
     health_status: Mapped[str | None] = mapped_column(String(32))
@@ -74,4 +84,5 @@ class Connector(
         cascade="all, delete-orphan",
         uselist=False,
         lazy="raise",
+        overlaps="tenant",
     )

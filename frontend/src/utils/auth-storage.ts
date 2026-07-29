@@ -15,7 +15,12 @@ export function readAuthSession(): AuthSession | null {
 
   try {
     const session = JSON.parse(raw) as AuthSession;
-    if (!session.token || session.expiresAt <= Date.now()) {
+    if (
+      !session.token ||
+      !session.refreshToken ||
+      !session.refreshExpiresAt ||
+      session.refreshExpiresAt <= Date.now()
+    ) {
       storage.removeItem(AUTH_STORAGE_KEY);
       return null;
     }

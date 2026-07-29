@@ -129,7 +129,7 @@ node -e '
   const fs = require("fs");
   const payload = {
     url: process.env.OPENWA_INIT_WEBHOOK_URL,
-    events: ["message.received"],
+    events: ["message.received", "message.sent"],
     secret: process.env.OPENWA_INIT_API_KEY,
     retryCount: 3,
   };

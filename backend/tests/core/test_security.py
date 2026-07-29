@@ -31,7 +31,11 @@ def test_password_hash_and_jwt_round_trip() -> None:
     claims = security.decode_access_token(token)
     assert claims.user_public_id == "01USER"
     assert claims.tenant_public_id == "01TENANT"
-    assert expires_in == 15 * 60
+    assert expires_in == 24 * 60 * 60
+
+    refresh_token, refresh_hash, _, refresh_expires_in = security.create_refresh_token()
+    assert security.hash_refresh_token(refresh_token) == refresh_hash
+    assert refresh_expires_in == 30 * 24 * 60 * 60
 
 
 def test_connector_config_cipher_uses_authenticated_encryption() -> None:
