@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -49,10 +51,10 @@ class DifyClient:
             )
 
         payload = {
-            "inputs": {},
+            "inputs": inputs,
             "query": query,
-            "response_mode": "blocking",
-            "conversation_id": "",
+            "response_mode": "streaming",
+            "conversation_id": conversation_id or "",
             "user": user,
         }
         headers = {
@@ -62,8 +64,8 @@ class DifyClient:
         base_url = self.settings.dify_api_base_url.rstrip("/") + "/"
         logger.info(
             "dify_chat_request url=%schat-messages user=%s "
-            "query_length=%s ignored_input_keys=%s "
-            "ignored_conversation_id=%s",
+            "query_length=%s input_keys=%s "
+            "conversation_id_present=%s response_mode=streaming",
             base_url,
             user,
             len(query),
@@ -75,8 +77,16 @@ class DifyClient:
                 base_url=base_url,
                 timeout=self.settings.dify_timeout_seconds,
             ) as client:
-                response = await client.post("chat-messages", json=payload, headers=headers)
-                response.raise_for_status()
+                async with client.stream(
+                    "POST",
+                    "chat-messages",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    if response.status_code >= 400:
+                        await response.aread()
+                    response.raise_for_status()
+                    data = await _read_streaming_chat_response(response)
         except httpx.TimeoutException as exc:
             raise UpstreamServiceError("Dify", "request timed out") from exc
         except httpx.HTTPStatusError as exc:
@@ -103,7 +113,6 @@ class DifyClient:
         except httpx.HTTPError as exc:
             raise UpstreamServiceError("Dify", "request failed") from exc
 
-        data = response.json()
         answer = str(data.get("answer") or "").strip()
         if not answer:
             raise UpstreamServiceError("Dify", "response did not contain an answer")
@@ -136,6 +145,67 @@ class DifyClient:
 
 def _optional_int(value: Any) -> int | None:
     return int(value) if value is not None else None
+
+
+async def _read_streaming_chat_response(response: httpx.Response) -> dict[str, Any]:
+    answer_parts: list[str] = []
+    result: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+
+    async for sse_event, raw_data in _iter_sse_events(response):
+        if raw_data == "[DONE]":
+            continue
+        try:
+            data = json.loads(raw_data)
+        except json.JSONDecodeError as exc:
+            raise UpstreamServiceError("Dify", "returned malformed SSE data") from exc
+        if not isinstance(data, dict):
+            continue
+
+        event = str(data.get("event") or sse_event or "")
+        if event in {"message", "agent_message"}:
+            answer_parts.append(str(data.get("answer") or ""))
+        elif event == "error":
+            message = str(data.get("message") or data.get("code") or "streaming request failed")
+            raise UpstreamServiceError("Dify", message)
+
+        for key in ("conversation_id", "task_id"):
+            if data.get(key):
+                result[key] = data[key]
+        if data.get("message_id"):
+            result["message_id"] = data["message_id"]
+        elif data.get("id") and not result.get("message_id"):
+            result["message_id"] = data["id"]
+
+        event_metadata = data.get("metadata")
+        if isinstance(event_metadata, dict):
+            metadata.update(event_metadata)
+
+    result["answer"] = "".join(answer_parts)
+    result["metadata"] = metadata
+    return result
+
+
+async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[tuple[str | None, str]]:
+    event_name: str | None = None
+    data_lines: list[str] = []
+
+    async for line in response.aiter_lines():
+        if not line:
+            if data_lines:
+                yield event_name, "\n".join(data_lines)
+            event_name = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event_name = line[6:].lstrip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+
+    if data_lines:
+        yield event_name, "\n".join(data_lines)
 
 
 def dify_key_type(value: str) -> str:

@@ -104,7 +104,7 @@ class AiAgentService:
                 query=payload.query,
                 user=customer_public_id,
                 conversation_id=None,
-                inputs={},
+                inputs=payload.inputs,
             )
         except Exception as exc:
             run.status = "failed"

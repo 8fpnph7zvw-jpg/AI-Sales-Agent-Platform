@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -11,26 +12,64 @@ from app.integrations.dify.client import DifyClient
 
 
 class FakeResponse:
+    status_code = 200
+
+    def __init__(self) -> None:
+        events = [
+            {
+                "event": "message",
+                "answer": "Enterprise ",
+                "conversation_id": "dify-conversation",
+                "task_id": "dify-task",
+                "message_id": "dify-message",
+            },
+            {
+                "event": "message",
+                "answer": "response",
+                "conversation_id": "dify-conversation",
+                "task_id": "dify-task",
+                "message_id": "dify-message",
+            },
+            {
+                "event": "message_end",
+                "conversation_id": "dify-conversation",
+                "task_id": "dify-task",
+                "message_id": "dify-message",
+                "metadata": {
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "total_price": "0.0015",
+                        "currency": "USD",
+                        "latency": 0.25,
+                    },
+                    "retriever_resources": [{"document_name": "catalog.pdf"}],
+                },
+            },
+        ]
+        self.lines = [
+            line
+            for event in events
+            for line in (f"data: {json.dumps(event)}", "")
+        ]
+
     def raise_for_status(self) -> None:
         return None
 
-    def json(self) -> dict[str, Any]:
-        return {
-            "answer": "Enterprise response",
-            "conversation_id": "dify-conversation",
-            "task_id": "dify-task",
-            "message_id": "dify-message",
-            "metadata": {
-                "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5,
-                    "total_price": "0.0015",
-                    "currency": "USD",
-                    "latency": 0.25,
-                },
-                "retriever_resources": [{"document_name": "catalog.pdf"}],
-            },
-        }
+    async def aiter_lines(self):
+        for line in self.lines:
+            yield line
+
+
+class FakeStreamContext:
+    def __init__(self, response: FakeResponse | httpx.Response) -> None:
+        self.response = response
+
+    async def __aenter__(self) -> FakeResponse | httpx.Response:
+        return self.response
+
+    async def __aexit__(self, *args) -> None:
+        return None
 
 
 class FakeAsyncClient:
@@ -48,47 +87,53 @@ class FakeAsyncClient:
     async def __aexit__(self, *args) -> None:
         return None
 
-    async def post(
+    def stream(
         self,
+        method: str,
         path: str,
         *,
         json: dict[str, Any],
         headers: dict[str, str],
-    ) -> FakeResponse:
+    ) -> FakeStreamContext:
+        assert method == "POST"
         type(self).request_path = path
         type(self).request_json = json
         type(self).request_headers = headers
-        return FakeResponse()
+        return FakeStreamContext(FakeResponse())
 
 
 class UnauthorizedAsyncClient(FakeAsyncClient):
-    async def post(
+    def stream(
         self,
+        method: str,
         path: str,
         *,
         json: dict[str, Any],
         headers: dict[str, str],
-    ) -> httpx.Response:
+    ) -> FakeStreamContext:
         del json, headers
-        request = httpx.Request("POST", f"https://api.dify.ai/v1/{path}")
-        return httpx.Response(401, request=request, json={"message": "Unauthorized"})
+        request = httpx.Request(method, f"https://api.dify.ai/v1/{path}")
+        response = httpx.Response(401, request=request, json={"message": "Unauthorized"})
+        return FakeStreamContext(response)
 
 
 class BadRequestAsyncClient(FakeAsyncClient):
-    async def post(
+    def stream(
         self,
+        method: str,
         path: str,
         *,
         json: dict[str, Any],
         headers: dict[str, str],
-    ) -> httpx.Response:
+    ) -> FakeStreamContext:
         del json, headers
-        request = httpx.Request("POST", f"https://api.dify.ai/v1/{path}")
-        return httpx.Response(
+        request = httpx.Request(method, f"https://api.dify.ai/v1/{path}")
+        response = httpx.Response(
             400,
             request=request,
             json={"code": "invalid_param", "message": "unexpected inputs"},
         )
+        return FakeStreamContext(response)
 
 
 @pytest.mark.asyncio
@@ -103,7 +148,7 @@ async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) 
     result = await DifyClient(settings).chat(
         query="Need 500 units",
         user="tenant:t:customer:c",
-        conversation_id=None,
+        conversation_id="existing-dify-conversation",
         inputs={"language": "en"},
     )
 
@@ -114,10 +159,10 @@ async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) 
         "Content-Type": "application/json",
     }
     assert FakeAsyncClient.request_json == {
-        "inputs": {},
+        "inputs": {"language": "en"},
         "query": "Need 500 units",
-        "response_mode": "blocking",
-        "conversation_id": "",
+        "response_mode": "streaming",
+        "conversation_id": "existing-dify-conversation",
         "user": "tenant:t:customer:c",
     }
     assert result.answer == "Enterprise response"
