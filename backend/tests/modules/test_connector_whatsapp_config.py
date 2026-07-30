@@ -60,7 +60,7 @@ class FakeSession:
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_session_is_stored_and_becomes_external_account_id() -> None:
+async def test_whatsapp_cloud_config_is_stored_and_phone_becomes_external_id() -> None:
     connector = SimpleNamespace(
         id=10,
         public_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -86,10 +86,13 @@ async def test_whatsapp_session_is_stored_and_becomes_external_account_id() -> N
             "connector_id": connector.public_id,
             "values": [
                 {
-                    "key": "session_id",
-                    "value": "sales-bot",
+                    "key": "phone_number_id",
+                    "value": "123456789",
                     "is_secret": False,
                 },
+                {"key": "access_token", "value": "token", "is_secret": False},
+                {"key": "verify_token", "value": "verify", "is_secret": False},
+                {"key": "app_secret", "value": "secret", "is_secret": False},
             ],
         }
     )
@@ -97,9 +100,12 @@ async def test_whatsapp_session_is_stored_and_becomes_external_account_id() -> N
     response = await service.configure(principal, payload)
 
     stored = {config.config_key: config for config in repository.configs}
-    assert stored["session_id"].value_encrypted == b"encrypted"
-    assert stored["session_id"].is_secret is False
-    assert connector.external_account_id == "sales-bot"
+    assert stored["phone_number_id"].value_encrypted == b"encrypted"
+    assert stored["phone_number_id"].is_secret is False
+    assert stored["access_token"].is_secret is True
+    assert stored["verify_token"].is_secret is True
+    assert stored["app_secret"].is_secret is True
+    assert connector.external_account_id == "123456789"
     assert connector.status == "draft"
     assert session.committed is True
-    assert "sales-bot" not in response.model_dump_json()
+    assert "123456789" not in response.model_dump_json()

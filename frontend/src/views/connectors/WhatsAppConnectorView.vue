@@ -1,184 +1,41 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import { CircleCheck, Connection, Iphone, Key, Refresh, Warning } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { Connection, Link } from "@element-plus/icons-vue";
+import { useRouter } from "vue-router";
 
-import {
-  createOpenWASession,
-  getOpenWAQRCode,
-  getOpenWAStatus,
-  reconnectOpenWA,
-  type OpenWAStatus,
-} from "@/api/connectors";
-import { getApiErrorMessage } from "@/api/client";
-
-const status = ref<OpenWAStatus | null>(null);
-const qrDataUrl = ref("");
-const loading = ref(false);
-let pollTimer: number | undefined;
-const canCreateSession = computed(
-  () => !status.value?.session_id && status.value?.status !== "starting",
-);
-const isConnected = computed(() =>
-  ["ready", "connected", "authenticated"].includes(
-    (status.value?.status || "").toLowerCase(),
-  ),
-);
-
-const statusMeta = computed(() => {
-  const value = (status.value?.status || "").toLowerCase();
-  if (["ready", "connected", "authenticated"].includes(value)) return { label: "Connected", type: "success", icon: CircleCheck } as const;
-  if (["qr", "qr_ready", "waiting_qr", "created", "starting", "initializing", "reconnecting"].includes(value)) {
-    return { label: ["qr", "qr_ready", "waiting_qr"].includes(value) ? "等待扫码" : "正在连接", type: "warning", icon: Warning } as const;
-  }
-  return { label: "未连接", type: "info", icon: Connection } as const;
-});
-
-async function refresh(silent = false): Promise<void> {
-  if (!silent) loading.value = true;
-  try {
-    status.value = await getOpenWAStatus();
-    if (["ready", "connected", "authenticated"].includes(status.value.status.toLowerCase())) qrDataUrl.value = "";
-    else if (status.value.qr_available && !qrDataUrl.value) {
-      const qr = await getOpenWAQRCode();
-      qrDataUrl.value = qr.data_url || "";
-    }
-  } catch (error) {
-    if (!silent) ElMessage.error(getApiErrorMessage(error));
-  } finally {
-    if (!silent) loading.value = false;
-  }
-}
-
-async function createSession(): Promise<void> {
-  if (!canCreateSession.value) {
-    ElMessage.info("Session 已存在，将直接复用。");
-    return;
-  }
-  loading.value = true;
-  try {
-    status.value = await createOpenWASession();
-    ElMessage.success("Session 已创建，正在生成二维码");
-    window.setTimeout(() => void refresh(true), 1200);
-  } catch (error) {
-    ElMessage.error(getApiErrorMessage(error));
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function showQRCode(): Promise<void> {
-  loading.value = true;
-  try {
-    const value = await getOpenWAQRCode();
-    status.value = {
-      ...(status.value || {
-        name: null,
-        api_key_configured: true,
-        qr_available: false,
-        phone_number: null,
-      }),
-      session_id: value.session_id,
-      status: value.status,
-      qr_available: Boolean(value.data_url),
-    };
-    qrDataUrl.value = value.data_url || "";
-    if (["ready", "connected", "authenticated"].includes(value.status.toLowerCase())) {
-      qrDataUrl.value = "";
-      ElMessage.success("WhatsApp Connected");
-    } else if (value.data_url) ElMessage.success("请使用 WhatsApp 扫描二维码");
-    else ElMessage.info(value.message);
-  } catch (error) {
-    ElMessage.warning(getApiErrorMessage(error));
-    await refresh(true);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function reconnect(): Promise<void> {
-  loading.value = true;
-  try {
-    qrDataUrl.value = "";
-    status.value = await reconnectOpenWA();
-    if (isConnected.value) {
-      ElMessage.success("WhatsApp Connected");
-    } else {
-      const value = await getOpenWAQRCode();
-      qrDataUrl.value = value.data_url || "";
-      if (value.data_url) ElMessage.success("Session 已重新启动，请使用 WhatsApp 扫描二维码");
-      else ElMessage.info(value.message);
-    }
-  } catch (error) {
-    ElMessage.error(getApiErrorMessage(error));
-  } finally {
-    loading.value = false;
-  }
-}
-
-onMounted(() => {
-  void refresh();
-  pollTimer = window.setInterval(() => void refresh(true), 5000);
-});
-onUnmounted(() => window.clearInterval(pollTimer));
+const router = useRouter();
 </script>
 
 <template>
-  <div class="whatsapp-page" v-loading="loading">
+  <div class="whatsapp-page">
     <div class="enterprise-page-header">
       <div>
         <span class="eyebrow">CHANNEL OPERATIONS</span>
         <h1>WhatsApp Connector</h1>
-        <p>连接企业 WhatsApp，实时接收客户消息并由 AI 销售助手自动响应。</p>
+        <p>通过统一 Connector 接口管理 WhatsApp Business 渠道和 provider adapter。</p>
       </div>
-      <el-button :icon="Refresh" @click="refresh()">刷新状态</el-button>
+      <el-button type="primary" :icon="Connection" @click="router.push('/connectors')">
+        管理 Connector
+      </el-button>
     </div>
 
-    <div class="connector-grid">
-      <el-card class="status-card" shadow="never">
-        <div class="status-card__hero">
-          <span class="whatsapp-mark"><Iphone /></span>
-          <div><small>OPENWA SERVICE</small><h2>连接状态</h2></div>
-          <el-tag :type="statusMeta.type" size="large" effect="light">
-            <el-icon><component :is="statusMeta.icon" /></el-icon> {{ statusMeta.label }}
-          </el-tag>
-        </div>
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="Session ID">{{ status?.session_id || "尚未创建" }}</el-descriptions-item>
-          <el-descriptions-item label="API Key">
-            <el-tag :type="status?.api_key_configured ? 'success' : 'danger'">
-              <el-icon><Key /></el-icon> {{ status?.api_key_configured ? "已安全配置" : "未配置" }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="WhatsApp 账号">{{ status?.phone_number || "等待连接" }}</el-descriptions-item>
-        </el-descriptions>
-        <div class="connector-actions">
-          <el-button type="primary" :disabled="!canCreateSession" @click="createSession">创建 Session</el-button>
-          <el-button type="success" @click="showQRCode">连接 WhatsApp</el-button>
-          <el-button @click="reconnect">重新连接</el-button>
-        </div>
-      </el-card>
-
-      <el-card class="qr-card" shadow="never">
-        <template #header><strong>手机扫码登录</strong></template>
-        <div v-if="isConnected" class="qr-empty">
-          <el-icon color="#16a34a"><CircleCheck /></el-icon>
-          <h3>Connected</h3>
-          <p>WhatsApp session is authenticated and ready.</p>
-        </div>
-        <div v-else-if="qrDataUrl" class="qr-stage">
-          <img :src="qrDataUrl" alt="WhatsApp 登录二维码" />
-          <p>二维码会定期刷新，请尽快完成扫描</p>
-        </div>
-        <div v-else class="qr-empty">
-          <el-icon><Iphone /></el-icon>
-          <h3>等待生成二维码</h3>
-          <p>点击“连接 WhatsApp”，二维码将在此处安全显示。</p>
-        </div>
-        <ol class="scan-guide">
-          <li>打开手机 WhatsApp</li><li>进入“设置 → 已关联设备”</li><li>点击“关联设备”并扫描上方二维码</li>
-        </ol>
-      </el-card>
-    </div>
+    <el-card shadow="never">
+      <el-result
+        icon="info"
+        title="使用 Provider Adapter 配置连接"
+        sub-title="二维码会话流程已停用。请在 Connector 管理中配置 WhatsApp Cloud API 凭据并测试连接。"
+      >
+        <template #extra>
+          <el-button type="primary" :icon="Link" @click="router.push('/connectors')">
+            前往 Connector 管理
+          </el-button>
+        </template>
+      </el-result>
+      <el-alert
+        title="Webhook URL 按 Connector 独立生成；Access Token、Verify Token 和 App Secret 均加密保存。"
+        type="success"
+        show-icon
+        :closable="false"
+      />
+    </el-card>
   </div>
 </template>

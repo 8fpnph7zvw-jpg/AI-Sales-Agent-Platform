@@ -3,22 +3,17 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
-    OpenWAQRCodeResponse,
-    OpenWASessionStatusResponse,
-    OpenWAStatusWebhookPayload,
     WhatsAppConfigStatusResponse,
     WhatsAppSendRequest,
     WhatsAppSendResponse,
     WhatsAppTestRequest,
     WhatsAppTestResponse,
-    WhatsAppWebhookPayload,
     WhatsAppWebhookResponse,
 )
 from app.connectors.whatsapp.service import WhatsAppService
@@ -48,11 +43,29 @@ def get_whatsapp_service(
 
 @webhook_router.get("")
 async def whatsapp_webhook_status() -> dict[str, str]:
-    return {"status": "ok", "provider": "openwa"}
+    return {"status": "ok", "interface": "provider-adapter"}
 
 
-@webhook_router.post("", response_model=WhatsAppWebhookResponse)
+@webhook_router.get("/{connector_id}")
+async def verify_whatsapp_webhook(
+    connector_id: str,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+    mode: Annotated[str, Query(alias="hub.mode")],
+    token: Annotated[str, Query(alias="hub.verify_token")],
+    challenge: Annotated[str, Query(alias="hub.challenge")],
+) -> Response:
+    value = await service.verify_webhook(
+        connector_id,
+        mode=mode,
+        token=token,
+        challenge=challenge,
+    )
+    return Response(content=value, media_type="text/plain")
+
+
+@webhook_router.post("/{connector_id}", response_model=WhatsAppWebhookResponse)
 async def receive_whatsapp_webhook(
+    connector_id: str,
     request: Request,
     service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
 ) -> WhatsAppWebhookResponse:
@@ -64,20 +77,19 @@ async def receive_whatsapp_webhook(
             "WhatsApp webhook payload exceeds the configured size limit.",
         )
     try:
-        payload_dict = json.loads(raw_body)
-        if not isinstance(payload_dict, dict):
+        payload = json.loads(raw_body)
+        if not isinstance(payload, dict):
             raise ValueError
-        payload = WhatsAppWebhookPayload.model_validate(payload_dict)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, ValueError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise AppError(
             422,
             "WHATSAPP_PAYLOAD_INVALID",
             "WhatsApp webhook payload is invalid.",
         ) from exc
     return await service.handle_webhook(
+        connector_id,
         raw_body=raw_body,
         payload=payload,
-        payload_dict=payload_dict,
         headers={key.lower(): value for key, value in request.headers.items()},
     )
 
@@ -110,42 +122,9 @@ async def whatsapp_config_status(
     webhook_url = (
         str(request.base_url).rstrip("/")
         + get_settings().api_prefix
-        + "/webhooks/whatsapp"
+        + f"/webhooks/whatsapp/{connector_id}"
     )
     return await service.config_status(principal, connector_id, webhook_url)
-
-
-@management_router.post(
-    "/status/webhook",
-    response_model=WhatsAppWebhookResponse,
-)
-async def receive_openwa_status_webhook(
-    request: Request,
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-) -> WhatsAppWebhookResponse:
-    raw_body = await request.body()
-    if len(raw_body) > get_settings().whatsapp_webhook_max_bytes:
-        raise AppError(
-            413,
-            "WHATSAPP_PAYLOAD_TOO_LARGE",
-            "WhatsApp status webhook payload exceeds the configured size limit.",
-        )
-    try:
-        payload_dict = json.loads(raw_body)
-        if not isinstance(payload_dict, dict):
-            raise ValueError
-        payload = OpenWAStatusWebhookPayload.model_validate(payload_dict)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, ValueError) as exc:
-        raise AppError(
-            422,
-            "WHATSAPP_PAYLOAD_INVALID",
-            "WhatsApp status webhook payload is invalid.",
-        ) from exc
-    return await service.handle_status_webhook(
-        raw_body=raw_body,
-        payload=payload,
-        headers={key.lower(): value for key, value in request.headers.items()},
-    )
 
 
 @management_router.post("/test", response_model=WhatsAppTestResponse)
@@ -158,58 +137,3 @@ async def test_whatsapp_connector(
     ],
 ) -> WhatsAppTestResponse:
     return await service.test_connection(principal, payload.connector_id)
-
-
-@management_router.get("/status", response_model=OpenWASessionStatusResponse)
-async def openwa_status(
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-    principal: Annotated[
-        Principal,
-        Depends(require_any_permission("connector.read", "connector.manage")),
-    ],
-) -> OpenWASessionStatusResponse:
-    return await service.session_status(principal)
-
-
-@management_router.post("/session", response_model=OpenWASessionStatusResponse)
-async def create_openwa_session(
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-    principal: Annotated[
-        Principal,
-        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
-    ],
-) -> OpenWASessionStatusResponse:
-    return await service.create_session(principal)
-
-
-@management_router.delete("/session", response_model=OpenWASessionStatusResponse)
-async def delete_openwa_session(
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-    principal: Annotated[
-        Principal,
-        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
-    ],
-) -> OpenWASessionStatusResponse:
-    return await service.delete_session(principal)
-
-
-@management_router.get("/qrcode", response_model=OpenWAQRCodeResponse)
-async def openwa_qrcode(
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-    principal: Annotated[
-        Principal,
-        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
-    ],
-) -> OpenWAQRCodeResponse:
-    return await service.qrcode(principal)
-
-
-@management_router.post("/reconnect", response_model=OpenWASessionStatusResponse)
-async def reconnect_openwa_session(
-    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
-    principal: Annotated[
-        Principal,
-        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
-    ],
-) -> OpenWASessionStatusResponse:
-    return await service.reconnect_session(principal)

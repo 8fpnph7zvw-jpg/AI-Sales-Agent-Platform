@@ -1,44 +1,37 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
 from app.connectors.base import ConnectorContext
 from app.connectors.whatsapp.client import (
+    DEFAULT_ADAPTER,
     REQUIRED_CONFIG_KEYS,
-    OpenWAClient,
     WhatsAppConnector,
 )
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
-    OpenWAQRCodeResponse,
-    OpenWASessionStatusResponse,
-    OpenWAStatusWebhookPayload,
     WhatsAppConfigStatusResponse,
     WhatsAppSendResponse,
     WhatsAppTestResponse,
-    WhatsAppWebhookPayload,
     WhatsAppWebhookResponse,
 )
 from app.core.config import Settings
 from app.core.encryption import ConfigCipher
-from app.core.exceptions import AppError, ConflictError, ResourceNotFoundError
+from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.integrations.dify.client import DifyChatResult, DifyClient
 from app.models.ai.ai_agent_run import AiAgentRun
 from app.models.auth.tenant import Tenant
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
-from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
@@ -77,133 +70,117 @@ class WhatsAppService:
         self.cipher = cipher
         self.dify = dify
 
-    async def session_status(
+    async def config_status(
         self,
         principal: Principal,
-    ) -> OpenWASessionStatusResponse:
-        connector, tenant, whatsapp_session = await self._management_session(
-            principal,
-            for_update=True,
+        connector_id: str,
+        webhook_url: str,
+    ) -> WhatsAppConfigStatusResponse:
+        connector = await self.repository.get_connector_for_update(
+            principal.tenant_id,
+            connector_id,
         )
-        result = await self._client(whatsapp_session).session_status()
-        self._apply_session_status(connector, whatsapp_session, result)
-        await self.session.commit()
-        return result
+        if connector is None:
+            raise ResourceNotFoundError("WhatsApp connector")
+        configured = sorted(
+            config.config_key
+            for config in await self.repository.get_configs(connector.id)
+            if config.value_encrypted is not None or config.secret_ref is not None
+        )
+        adapter = await self._configured_adapter(connector)
+        return WhatsAppConfigStatusResponse(
+            connector_id=connector.public_id,
+            adapter=adapter,
+            configured_keys=configured,
+            required_keys=list(REQUIRED_CONFIG_KEYS),
+            webhook_url=webhook_url,
+        )
 
-    async def create_session(
+    async def test_connection(
         self,
         principal: Principal,
-    ) -> OpenWASessionStatusResponse:
-        connector, tenant, whatsapp_session = await self._management_session(
-            principal,
+        connector_id: str,
+    ) -> WhatsAppTestResponse:
+        context = await self.repository.get_connector_context(
+            principal.tenant_id,
+            connector_id,
             for_update=True,
         )
-        client = self._client(whatsapp_session)
-        result = await client.create_session()
-        await self._assert_unclaimed(
-            connector,
-            session_name=result.name or whatsapp_session.session_name,
-            session_id=result.session_id,
-        )
-        self._apply_session_status(connector, whatsapp_session, result)
-        await self._commit_session_lifecycle()
-        logger.info(
-            "whatsapp_session_created_or_reused tenant_id=%s connector_id=%s "
-            "openwa_session_id=%s status=%s",
-            tenant.id,
-            connector.public_id,
-            whatsapp_session.session_id,
-            whatsapp_session.status,
-        )
-        return result
-
-    async def qrcode(
-        self,
-        principal: Principal,
-    ) -> OpenWAQRCodeResponse:
-        connector, tenant, whatsapp_session = await self._management_session(
-            principal,
-            for_update=True,
-        )
-        client = self._client(whatsapp_session)
-        result = await client.qrcode()
-        await self._assert_unclaimed(
-            connector,
-            session_name=client.session_name,
-            session_id=client.session_id,
-        )
-        whatsapp_session.session_id = client.session_id
-        connector.session_id = client.session_id
-        whatsapp_session.session_name = client.session_name
-        whatsapp_session.status = result.status
-        whatsapp_session.session_data = {
-            **(whatsapp_session.session_data or {}),
-            "openwa_session_id": client.session_id,
-            "session_name": client.session_name,
-            "status": result.status,
-            "observed_at": datetime.now(UTC).isoformat(),
+        if context is None:
+            raise ResourceNotFoundError("WhatsApp connector")
+        connector, tenant = context
+        runtime = await self._runtime(connector, tenant)
+        try:
+            result = await runtime.adapter.health_check()
+        except Exception as exc:
+            connector.status = "error"
+            connector.health_status = "unhealthy"
+            connector.health_detail = {"message": str(exc)[:500]}
+            connector.last_health_check_at = datetime.now(UTC)
+            await self.session.commit()
+            logger.warning(
+                "whatsapp_connector_test_failed tenant_id=%s connector_id=%s error=%s",
+                principal.tenant_id,
+                connector.public_id,
+                type(exc).__name__,
+            )
+            raise
+        connector.status = "active"
+        connector.health_status = result.status
+        connector.health_detail = {
+            "message": result.message,
+            "adapter": runtime.adapter.adapter_key,
         }
-        if result.data_url:
-            whatsapp_session.qr_code = result.data_url
-        elif result.status in {"connected", "disconnected", "error"}:
-            whatsapp_session.qr_code = None
-        if result.status == "connected":
-            now = datetime.now(UTC)
-            whatsapp_session.last_connected_at = now
-            connector.status = "active"
-            connector.health_status = "healthy"
-            connector.last_connected_at = now
-            connector.last_disconnect_reason = None
-        await self._commit_session_lifecycle()
-        logger.info(
-            "whatsapp_qr_status tenant_id=%s connector_id=%s "
-            "openwa_session_id=%s status=%s qr_available=%s",
-            tenant.id,
-            connector.public_id,
-            whatsapp_session.session_id,
-            result.status,
-            bool(result.data_url),
-        )
-        return result
-
-    async def delete_session(
-        self,
-        principal: Principal,
-    ) -> OpenWASessionStatusResponse:
-        connector, _, whatsapp_session = await self._management_session(
-            principal,
-            for_update=True,
-        )
-        result = await self._client(whatsapp_session).delete_session()
-        whatsapp_session.session_id = None
-        whatsapp_session.status = "disconnected"
-        whatsapp_session.qr_code = None
-        whatsapp_session.last_error = None
-        whatsapp_session.session_data = None
-        connector.session_id = None
-        connector.status = "draft"
-        connector.health_status = None
+        connector.last_health_check_at = result.checked_at
+        connector.last_connected_at = result.checked_at
+        connector.last_disconnect_reason = None
         await self.session.commit()
-        return result
+        return WhatsAppTestResponse(
+            connector_id=connector.public_id,
+            status=result.status,
+            message=result.message,
+            latency_ms=result.latency_ms,
+            checked_at=result.checked_at,
+        )
 
-    async def reconnect_session(
+    async def verify_webhook(
         self,
-        principal: Principal,
-    ) -> OpenWASessionStatusResponse:
-        connector, _, whatsapp_session = await self._management_session(
-            principal,
+        connector_id: str,
+        *,
+        mode: str,
+        token: str,
+        challenge: str,
+    ) -> str:
+        context = await self.repository.get_connector_context_by_public_id(connector_id)
+        if context is None:
+            raise ResourceNotFoundError("Active WhatsApp connector")
+        runtime = await self._runtime(*context)
+        return runtime.adapter.verify_challenge(mode, token, challenge)
+
+    async def handle_webhook(
+        self,
+        connector_id: str,
+        *,
+        raw_body: bytes,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> WhatsAppWebhookResponse:
+        context = await self.repository.get_connector_context_by_public_id(
+            connector_id,
             for_update=True,
         )
-        client = self._client(whatsapp_session)
-        result = await client.reconnect()
-        await self._assert_unclaimed(
-            connector,
-            session_name=client.session_name,
-            session_id=client.session_id,
-        )
-        self._apply_session_status(connector, whatsapp_session, result)
-        await self._commit_session_lifecycle()
-        return result
+        if context is None:
+            raise ResourceNotFoundError("Active WhatsApp connector")
+        runtime = await self._runtime(*context)
+        envelopes = await runtime.adapter.normalize_inbound(payload, headers, raw_body)
+        response = WhatsAppWebhookResponse()
+        for envelope in envelopes:
+            duplicate = await self._process_message(runtime, envelope, headers, raw_body)
+            if duplicate:
+                response.duplicates += 1
+            else:
+                response.processed += 1
+        return response
 
     async def send_message(
         self,
@@ -211,7 +188,10 @@ class WhatsAppService:
         recipient: str,
         text: str,
     ) -> WhatsAppSendResponse:
-        connector, _, whatsapp_session = await self._management_session(principal)
+        context = await self.repository.get_management_context(principal.tenant_id)
+        if context is None:
+            raise ResourceNotFoundError("Tenant WhatsApp connector")
+        connector, tenant = context
         digits = "".join(character for character in recipient if character.isdigit())
         customer = await self.repository.get_customer_by_phone(
             principal.tenant_id,
@@ -231,409 +211,25 @@ class WhatsAppService:
         if not can_send_all and customer.owner_user_id != principal.user_id:
             raise ResourceNotFoundError("Assigned customer")
 
-        status = await self._client(whatsapp_session).session_status()
-        self._apply_session_status(connector, whatsapp_session, status)
-        await self.session.commit()
-        if status.status != "connected":
-            raise ConflictError(
-                "WHATSAPP_SESSION_NOT_CONNECTED",
-                "The tenant WhatsApp session is not connected.",
-            )
-        return await self._client(whatsapp_session).send_text(recipient, text)
-
-    async def _management_session(
-        self,
-        principal: Principal,
-        *,
-        for_update: bool = False,
-    ) -> tuple[Connector, Tenant, WhatsAppSession]:
-        context = await self.repository.get_management_context(
-            principal.tenant_id,
-            for_update=for_update,
-        )
-        if context is None:
-            raise ResourceNotFoundError("Tenant WhatsApp connector")
-        connector, tenant = context
-        session_name = await self._desired_session_name(connector)
-        whatsapp_session = await self.repository.get_whatsapp_session(
-            principal.tenant_id,
-            connector.id,
-            for_update=for_update,
-        )
-        if whatsapp_session is None:
-            await self._assert_unclaimed(
-                connector,
-                session_name=session_name,
-                session_id=connector.session_id,
-            )
-            whatsapp_session = WhatsAppSession(
-                tenant_id=principal.tenant_id,
-                connector_id=connector.id,
-                session_id=connector.session_id,
-                session_name=session_name,
-                status="created",
-            )
-            self.repository.add_whatsapp_session(whatsapp_session)
-            try:
-                await self.session.flush()
-            except IntegrityError as exc:
-                await self.session.rollback()
-                raise ConflictError(
-                    "WHATSAPP_SESSION_ALREADY_CLAIMED",
-                    "This OpenWA session is already assigned to another tenant connector.",
-                ) from exc
-        elif (
-            whatsapp_session.session_name != session_name
-            and whatsapp_session.session_id is None
-        ):
-            await self._assert_unclaimed(
-                connector,
-                session_name=session_name,
-                session_id=None,
-            )
-            whatsapp_session.session_name = session_name
-        if connector.session_id and whatsapp_session.session_id is None:
-            whatsapp_session.session_id = connector.session_id
-        elif whatsapp_session.session_id and connector.session_id is None:
-            connector.session_id = whatsapp_session.session_id
-        elif (
-            connector.session_id
-            and whatsapp_session.session_id
-            and connector.session_id != whatsapp_session.session_id
-        ):
-            raise ConflictError(
-                "WHATSAPP_SESSION_BINDING_MISMATCH",
-                "Connector and WhatsApp session bindings do not match.",
-            )
-        return connector, tenant, whatsapp_session
-
-    async def _desired_session_name(self, connector: Connector) -> str:
-        configs = await self.repository.get_configs(connector.id)
-        configured = next(
-            (
-                self._decrypt(connector, config)
-                for config in configs
-                if config.config_key == "session_id"
-                and config.value_encrypted is not None
-            ),
-            None,
-        )
-        external = (
-            connector.external_account_id
-            if connector.external_account_id != "demo-template"
-            else None
-        )
-        return OpenWAClient._resolve_session_name(
-            str(configured or external or ""),
-            self.settings.openwa_session_name,
-        )
-
-    def _client(self, whatsapp_session: WhatsAppSession) -> OpenWAClient:
-        return OpenWAClient(
-            self.settings,
-            session_id=whatsapp_session.session_id,
-            session_name=whatsapp_session.session_name,
-        )
-
-    async def _assert_unclaimed(
-        self,
-        connector: Connector,
-        *,
-        session_name: str,
-        session_id: str | None,
-    ) -> None:
-        claim = await self.repository.get_session_claim(
-            session_name=session_name,
-            session_id=session_id,
-            exclude_connector_id=connector.id,
-        )
-        if claim is not None:
-            raise ConflictError(
-                "WHATSAPP_SESSION_ALREADY_CLAIMED",
-                "This OpenWA session is already assigned to another tenant connector.",
-            )
-
-    @staticmethod
-    def _apply_session_status(
-        connector: Connector,
-        whatsapp_session: WhatsAppSession,
-        result: OpenWASessionStatusResponse,
-    ) -> None:
-        if result.session_id:
-            whatsapp_session.session_id = result.session_id
-            connector.session_id = result.session_id
-        if result.name:
-            whatsapp_session.session_name = result.name
-        if result.phone_number:
-            whatsapp_session.phone = result.phone_number
-            connector.phone = result.phone_number
-        whatsapp_session.status = result.status
-        whatsapp_session.last_error = result.last_error
-        whatsapp_session.session_data = {
-            **(result.session_data or {}),
-            "openwa_session_id": whatsapp_session.session_id,
-            "session_name": whatsapp_session.session_name,
-            "phone": result.phone_number or whatsapp_session.phone,
-            "status": result.status,
-            "observed_at": datetime.now(UTC).isoformat(),
-        }
-        if result.status == "connected":
-            now = datetime.now(UTC)
-            whatsapp_session.qr_code = None
-            whatsapp_session.last_connected_at = now
-            whatsapp_session.last_error = None
-            connector.status = "active"
-            connector.health_status = "healthy"
-            connector.health_detail = {"message": "WhatsApp session is connected."}
-            connector.last_connected_at = now
-            connector.last_disconnect_reason = None
-        elif result.status in {"disconnected", "error"}:
-            whatsapp_session.qr_code = None
-            connector.status = "error"
-            connector.health_status = (
-                "unhealthy" if result.status == "error" else "degraded"
-            )
-            connector.health_detail = {
-                "message": (
-                    result.last_error
-                    or f"WhatsApp session is {result.status}."
-                )
-            }
-            connector.last_disconnect_reason = (
-                result.last_error or f"OpenWA session is {result.status}."
-            )
-        else:
-            connector.status = "draft"
-            connector.health_status = "degraded"
-            connector.health_detail = {
-                "message": f"WhatsApp session is {result.status}."
-            }
-        connector.last_health_check_at = datetime.now(UTC)
-
-    async def handle_status_webhook(
-        self,
-        *,
-        raw_body: bytes,
-        payload: OpenWAStatusWebhookPayload,
-        headers: dict[str, str],
-    ) -> WhatsAppWebhookResponse:
-        self._verify_signature(
-            raw_body,
-            headers.get("x-openwa-signature"),
-            self.settings.openwa_api_key,
-        )
-        event = payload.event.strip().lower()
-        if event not in {"ready", "connected", "authenticated", "disconnected"}:
-            return WhatsAppWebhookResponse(status="ignored")
-        context = await self.repository.get_connector_by_session(payload.session_id)
-        if context is None:
-            raise ResourceNotFoundError("Active WhatsApp connector")
-        connector, _tenant = context
-        whatsapp_session = await self.repository.get_whatsapp_session(
-            connector.tenant_id,
-            connector.id,
-            for_update=True,
-        )
-        if whatsapp_session is None:
-            raise ResourceNotFoundError("Tenant WhatsApp session")
-        observed_at = payload.timestamp or datetime.now(UTC)
-        if observed_at.tzinfo is None:
-            observed_at = observed_at.replace(tzinfo=UTC)
-        last_observed_value = (whatsapp_session.session_data or {}).get(
-            "last_status_webhook_at"
-        )
-        if isinstance(last_observed_value, str):
-            try:
-                last_observed_at = datetime.fromisoformat(
-                    last_observed_value.replace("Z", "+00:00")
-                )
-                if last_observed_at.tzinfo is None:
-                    last_observed_at = last_observed_at.replace(tzinfo=UTC)
-                if last_observed_at >= observed_at:
-                    return WhatsAppWebhookResponse(status="accepted")
-            except ValueError:
-                pass
-
-        observed_status = OpenWAClient.normalize_status(payload.status or event)
-        result = OpenWASessionStatusResponse(
-            session_id=payload.session_id,
-            name=whatsapp_session.session_name,
-            status=observed_status,
-            api_key_configured=bool(self.settings.openwa_api_key),
-            phone_number=payload.phone_number,
-            last_error=payload.reason if observed_status == "disconnected" else None,
-            session_data={
-                **(whatsapp_session.session_data or {}),
-                "last_status_event": event,
-                "last_status_delivery_id": payload.delivery_id,
-                "last_status_webhook_at": observed_at.isoformat(),
-            },
-        )
-        self._apply_session_status(connector, whatsapp_session, result)
-        await self._commit_session_lifecycle()
-        logger.info(
-            "openwa_status_webhook tenant_id=%s connector_id=%s "
-            "openwa_session_id=%s event=%s status=%s",
-            connector.tenant_id,
-            connector.public_id,
-            payload.session_id,
-            event,
-            observed_status,
-        )
-        return WhatsAppWebhookResponse(status="accepted")
-
-    async def _commit_session_lifecycle(self) -> None:
-        try:
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise ConflictError(
-                "WHATSAPP_SESSION_ALREADY_CLAIMED",
-                "This OpenWA session is already assigned to another tenant connector.",
-            ) from exc
-
-    async def config_status(
-        self,
-        principal: Principal,
-        connector_id: str,
-        webhook_url: str,
-    ) -> WhatsAppConfigStatusResponse:
-        connector = await self.repository.get_connector_for_update(
-            principal.tenant_id,
-            connector_id,
-        )
-        if connector is None:
-            raise ResourceNotFoundError("WhatsApp connector")
-        configured = sorted(
-            config.config_key
-            for config in await self.repository.get_configs(connector.id)
-            if config.value_encrypted is not None or config.secret_ref is not None
-        )
-        return WhatsAppConfigStatusResponse(
-            connector_id=connector.public_id,
-            configured_keys=configured,
-            required_keys=list(REQUIRED_CONFIG_KEYS),
-            webhook_url=webhook_url,
-        )
-
-    async def test_connection(
-        self,
-        principal: Principal,
-        connector_id: str,
-    ) -> WhatsAppTestResponse:
-        connector = await self.repository.get_connector_for_update(
-            principal.tenant_id,
-            connector_id,
-        )
-        if connector is None:
-            raise ResourceNotFoundError("WhatsApp connector")
-        tenant = Tenant(id=principal.tenant_id, public_id=principal.tenant_public_id)
         runtime = await self._runtime(connector, tenant)
-        try:
-            result = await runtime.adapter.health_check()
-        except Exception as exc:
-            connector.status = "error"
-            connector.health_status = "unhealthy"
-            connector.health_detail = {"message": str(exc)[:500]}
-            connector.last_health_check_at = datetime.now(UTC)
-            await self.session.commit()
-            logger.warning(
-                "whatsapp_connector_test_failed tenant_id=%s connector_id=%s error=%s",
-                principal.tenant_id,
-                connector.public_id,
-                type(exc).__name__,
+        envelope = UnifiedMessageEnvelope(
+            idempotency_key=f"whatsapp:manual:{uuid4().hex}",
+            tenant_id=tenant.public_id,
+            channel="whatsapp",
+            direction=Direction.OUTBOUND,
+            message_type=MessageType.TEXT,
+            conversation_id=digits,
+            sender=Party(id=str(runtime.config.get("phone_number_id") or connector.public_id)),
+            recipients=[Party(id=recipient)],
+            content=TextContent(text=text),
+        )
+        result = await runtime.adapter.send(envelope)
+        if not result.accepted or not result.provider_request_id:
+            raise ConflictError(
+                "WHATSAPP_SEND_REJECTED",
+                result.detail or "WhatsApp provider rejected the outbound message.",
             )
-            raise
-        connector.status = "active"
-        connector.health_status = result.status
-        connector.health_detail = {"message": result.message}
-        connector.last_health_check_at = result.checked_at
-        await self.session.commit()
-        logger.info(
-            "whatsapp_connector_test_succeeded tenant_id=%s connector_id=%s latency_ms=%s",
-            principal.tenant_id,
-            connector.public_id,
-            result.latency_ms,
-        )
-        return WhatsAppTestResponse(
-            connector_id=connector.public_id,
-            status=result.status,
-            message=result.message,
-            latency_ms=result.latency_ms,
-            checked_at=result.checked_at,
-        )
-
-    async def handle_webhook(
-        self,
-        *,
-        raw_body: bytes,
-        payload: WhatsAppWebhookPayload,
-        payload_dict: dict[str, Any],
-        headers: dict[str, str],
-    ) -> WhatsAppWebhookResponse:
-        try:
-            self._verify_signature(
-                raw_body,
-                headers.get("x-openwa-signature"),
-                self.settings.openwa_api_key,
-            )
-        except AppError:
-            logger.warning(
-                "openwa_signature_rejected session_id=%s request_id=%s",
-                payload.session_id,
-                headers.get("x-request-id"),
-            )
-            raise
-        if payload.event not in {"message.received", "message.sent"}:
-            return WhatsAppWebhookResponse(status="ignored")
-        context = await self.repository.get_connector_by_session(payload.session_id)
-        if context is None:
-            raise ResourceNotFoundError("Active WhatsApp connector")
-        whatsapp_session = await self.repository.get_whatsapp_session(
-            context[0].tenant_id,
-            context[0].id,
-            for_update=True,
-        )
-        if whatsapp_session is None:
-            raise ResourceNotFoundError("Tenant WhatsApp session")
-        logger.info(
-            "message_received tenant_id=%s connector_id=%s session_id=%s "
-            "event=%s",
-            context[0].tenant_id,
-            context[0].public_id,
-            payload.session_id,
-            payload.event,
-        )
-        now = datetime.now(UTC)
-        whatsapp_session.status = "connected"
-        whatsapp_session.last_connected_at = now
-        whatsapp_session.last_error = None
-        whatsapp_session.session_data = {
-            **(whatsapp_session.session_data or {}),
-            "last_webhook_event": payload.event,
-            "last_webhook_at": now.isoformat(),
-            "last_delivery_id": payload.delivery_id,
-        }
-        context[0].status = "active"
-        context[0].health_status = "healthy"
-        context[0].health_detail = {"message": "WhatsApp webhook is active."}
-        context[0].last_health_check_at = now
-        context[0].phone = whatsapp_session.phone
-        context[0].last_connected_at = now
-        context[0].last_disconnect_reason = None
-        if payload.event == "message.sent":
-            await self.session.commit()
-            return WhatsAppWebhookResponse(status="accepted")
-        runtime = await self._runtime(*context)
-        envelopes = await runtime.adapter.normalize_inbound(payload_dict, headers)
-        response = WhatsAppWebhookResponse()
-        for envelope in envelopes:
-            duplicate = await self._process_message(runtime, envelope, headers, raw_body)
-            if duplicate:
-                response.duplicates += 1
-            else:
-                response.processed += 1
-        return response
+        return WhatsAppSendResponse(message_id=result.provider_request_id)
 
     async def _runtime(
         self,
@@ -646,13 +242,7 @@ class WhatsAppService:
             for config in configs
             if config.value_encrypted is not None
         }
-        values.setdefault("session_id", self.settings.openwa_session_name)
-        whatsapp_session = await self.repository.get_whatsapp_session(
-            connector.tenant_id,
-            connector.id,
-        )
-        if whatsapp_session and whatsapp_session.session_id:
-            values["openwa_session_id"] = whatsapp_session.session_id
+        values.setdefault("adapter", DEFAULT_ADAPTER)
         adapter = WhatsAppConnector(
             ConnectorContext(
                 tenant_id=tenant.public_id,
@@ -663,6 +253,12 @@ class WhatsAppService:
         )
         return WhatsAppRuntime(connector, tenant, values, adapter)
 
+    async def _configured_adapter(self, connector: Connector) -> str:
+        for config in await self.repository.get_configs(connector.id):
+            if config.config_key == "adapter" and config.value_encrypted is not None:
+                return str(self._decrypt(connector, config))
+        return DEFAULT_ADAPTER
+
     def _decrypt(self, connector: Connector, config: ConnectorConfig) -> Any:
         if config.value_encrypted is None:
             return None
@@ -670,24 +266,6 @@ class WhatsAppService:
             config.value_encrypted,
             associated_data=f"{connector.tenant_id}:{connector.id}:{config.config_key}",
         )
-
-    @staticmethod
-    def _verify_signature(
-        raw_body: bytes,
-        signature: str | None,
-        webhook_secret: Any,
-    ) -> None:
-        if not isinstance(webhook_secret, str) or not webhook_secret:
-            raise AppError(
-                503,
-                "OPENWA_API_KEY_REQUIRED",
-                "OPENWA_API_KEY is required for webhook signature validation.",
-            )
-        if not signature or not signature.startswith("sha256="):
-            raise AppError(403, "WHATSAPP_SIGNATURE_INVALID", "Webhook signature is missing.")
-        expected = hmac.new(webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature[7:], expected):
-            raise AppError(403, "WHATSAPP_SIGNATURE_INVALID", "Webhook signature is invalid.")
 
     async def _process_message(
         self,
@@ -716,8 +294,8 @@ class WhatsAppService:
                     "content_type": headers.get("content-type"),
                     "user_agent": headers.get("user-agent"),
                     "request_id": headers.get("x-request-id"),
-                    "signature_present": "x-openwa-signature" in headers,
-                    "openwa_delivery_id": headers.get("x-openwa-delivery-id"),
+                    "signature_present": "x-hub-signature-256" in headers,
+                    "provider_adapter": runtime.adapter.adapter_key,
                 },
                 payload_redacted={
                     "from": self._redact_phone(envelope.sender.id),
@@ -990,7 +568,9 @@ class WhatsAppService:
             direction=Direction.OUTBOUND,
             message_type=MessageType.TEXT,
             conversation_id=str(outbound.conversation_id),
-            sender=Party(id=str(runtime.config["session_id"])),
+            sender=Party(
+                id=str(runtime.config.get("phone_number_id") or runtime.connector.public_id)
+            ),
             recipients=[Party(id=customer_session.external_contact_id)],
             content=TextContent(text=outbound.content_text or ""),
         )
@@ -999,7 +579,7 @@ class WhatsAppService:
             if not result.accepted:
                 raise ConflictError(
                     "WHATSAPP_SEND_REJECTED",
-                    result.detail or "WhatsApp rejected the outbound message.",
+                    result.detail or "WhatsApp provider rejected the outbound message.",
                 )
         except Exception as exc:
             outbound.status = "failed"

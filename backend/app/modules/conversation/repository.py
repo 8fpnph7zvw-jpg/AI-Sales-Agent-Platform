@@ -4,6 +4,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.connector.connector import Connector
+from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
@@ -211,6 +212,18 @@ class ConversationRepository:
             )
         ).one_or_none()
         return (row[0], row[1], row[2]) if row else None
+
+    async def get_connector_configs(self, connector_id: int) -> list[ConnectorConfig]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(ConnectorConfig).where(
+                        ConnectorConfig.connector_id == connector_id,
+                        ConnectorConfig.value_encrypted.is_not(None),
+                    )
+                )
+            ).all()
+        )
 
     def add_message(self, message: Message) -> None:
         self.session.add(message)

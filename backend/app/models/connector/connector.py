@@ -34,7 +34,7 @@ class Connector(
         ),
         UniqueConstraint(
             "session_id",
-            name="uq_connectors_openwa_session",
+            name="uq_connectors_provider_session",
         ),
         UniqueConstraint(
             "id",

@@ -80,6 +80,53 @@ class WhatsAppRepository:
         row = (await self.session.execute(statement)).one_or_none()
         return (row[0], row[1]) if row else None
 
+    async def get_connector_context(
+        self,
+        tenant_id: int,
+        public_id: str,
+        *,
+        for_update: bool = False,
+    ) -> tuple[Connector, Tenant] | None:
+        statement = (
+            select(Connector, Tenant)
+            .join(Tenant, Tenant.id == Connector.tenant_id)
+            .where(
+                Connector.tenant_id == tenant_id,
+                Connector.public_id == public_id,
+                Connector.provider == "whatsapp",
+                Connector.deleted_at.is_(None),
+                Tenant.status == "active",
+                Tenant.deleted_at.is_(None),
+            )
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = (await self.session.execute(statement)).one_or_none()
+        return (row[0], row[1]) if row else None
+
+    async def get_connector_context_by_public_id(
+        self,
+        public_id: str,
+        *,
+        for_update: bool = False,
+    ) -> tuple[Connector, Tenant] | None:
+        statement = (
+            select(Connector, Tenant)
+            .join(Tenant, Tenant.id == Connector.tenant_id)
+            .where(
+                Connector.public_id == public_id,
+                Connector.provider == "whatsapp",
+                Connector.status != "disabled",
+                Connector.deleted_at.is_(None),
+                Tenant.status == "active",
+                Tenant.deleted_at.is_(None),
+            )
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = (await self.session.execute(statement)).one_or_none()
+        return (row[0], row[1]) if row else None
+
     async def get_whatsapp_session(
         self,
         tenant_id: int,

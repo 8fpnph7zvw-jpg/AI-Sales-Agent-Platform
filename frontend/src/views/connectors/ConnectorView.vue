@@ -36,7 +36,11 @@ const genericConfigRows = reactive<GenericConfigRow[]>([
   { key: "", value: "", value_type: "string", is_secret: true },
 ]);
 const whatsappForm = reactive({
-  session_id: "",
+  adapter: "cloud_api",
+  phone_number_id: "",
+  access_token: "",
+  verify_token: "",
+  app_secret: "",
 });
 const isWhatsApp = computed(() => selected.value?.provider === "whatsapp");
 
@@ -57,9 +61,13 @@ async function openConfig(row: Connector): Promise<void> {
   configuredKeys.value = [];
   webhookUrl.value = "";
   Object.assign(whatsappForm, {
-    session_id: row.external_account_id === "demo-template"
+    adapter: "cloud_api",
+    phone_number_id: row.external_account_id === "demo-template"
       ? ""
       : row.external_account_id,
+    access_token: "",
+    verify_token: "",
+    app_secret: "",
   });
   genericConfigRows.splice(
     0,
@@ -101,7 +109,7 @@ async function save(): Promise<void> {
           value_type: "string",
           is_secret: false,
         }));
-      const missing = ["session_id"].filter(
+      const missing = ["phone_number_id", "access_token", "verify_token", "app_secret"].filter(
         (key) => !isConfigured(key) && !values.some((item) => item.key === key),
       );
       if (missing.length) {
@@ -119,7 +127,7 @@ async function save(): Promise<void> {
       configuredKeys.value = Array.from(
         new Set([...configuredKeys.value, ...result.configured_keys]),
       );
-      ElMessage.success("OpenWA Session 配置已保存，请执行连接测试");
+      ElMessage.success("WhatsApp Cloud API 配置已保存，请执行连接测试");
     } else {
       if (genericConfigRows.some((item) => !item.key || !item.value)) {
         ElMessage.warning("请填写配置键和值");
@@ -224,7 +232,7 @@ onMounted(load);
       destroy-on-close
     >
       <el-alert
-        title="OpenWA URL 和 API Key 由服务端环境变量管理；这里只配置租户使用的 OpenWA Session。"
+        title="WhatsApp 使用 provider adapter；Graph API 地址由服务端管理，租户凭据在此加密保存。"
         type="info"
         show-icon
         :closable="false"
@@ -237,10 +245,39 @@ onMounted(load);
         label-position="top"
         class="connector-config-form"
       >
-        <el-form-item label="OpenWA Session ID" required>
+        <el-form-item label="Provider Adapter" required>
+          <el-select v-model="whatsappForm.adapter">
+            <el-option label="WhatsApp Cloud API" value="cloud_api" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Phone Number ID" required>
           <el-input
-            v-model="whatsappForm.session_id"
-            :placeholder="configuredPlaceholder('session_id', '例如 ai-sales-agent')"
+            v-model="whatsappForm.phone_number_id"
+            :placeholder="configuredPlaceholder('phone_number_id', 'Meta Phone Number ID')"
+          />
+        </el-form-item>
+        <el-form-item label="Access Token" required>
+          <el-input
+            v-model="whatsappForm.access_token"
+            type="password"
+            show-password
+            :placeholder="configuredPlaceholder('access_token', '永久访问令牌')"
+          />
+        </el-form-item>
+        <el-form-item label="Verify Token" required>
+          <el-input
+            v-model="whatsappForm.verify_token"
+            type="password"
+            show-password
+            :placeholder="configuredPlaceholder('verify_token', 'Webhook Verify Token')"
+          />
+        </el-form-item>
+        <el-form-item label="App Secret" required>
+          <el-input
+            v-model="whatsappForm.app_secret"
+            type="password"
+            show-password
+            :placeholder="configuredPlaceholder('app_secret', 'Meta App Secret')"
           />
         </el-form-item>
         <el-form-item label="Webhook URL">

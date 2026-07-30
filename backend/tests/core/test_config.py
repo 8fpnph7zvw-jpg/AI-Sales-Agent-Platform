@@ -13,10 +13,3 @@ def test_cors_origins_accepts_comma_separated_environment_value(monkeypatch) -> 
         "https://sales.example.com",
         "https://admin.example.com",
     ]
-
-
-def test_openwa_defaults_use_docker_service_dns() -> None:
-    settings = Settings(_env_file=None)
-
-    assert settings.openwa_url == "http://openwa:2785/api"
-    assert settings.openwa_session == "ai-sales-agent"

@@ -1,4 +1,4 @@
-"""Persist tenant-scoped OpenWA session lifecycle state.
+"""Persist tenant-scoped WhatsApp provider session lifecycle state.
 
 Revision ID: 20260728_0003
 Revises: 20260725_0002
@@ -70,7 +70,7 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint(
             "session_id",
-            name="uq_whatsapp_sessions_openwa_session",
+            name="uq_whatsapp_sessions_provider_session",
         ),
         sa.UniqueConstraint(
             "session_name",

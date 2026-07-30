@@ -15,10 +15,6 @@ x-backend-environment: &backend-environment
   DIFY_API_BASE_URL: ${DIFY_API_BASE_URL:-https://api.dify.ai/v1}
   DIFY_API_KEY: ${DIFY_API_KEY:-}
   DIFY_TIMEOUT_SECONDS: ${DIFY_TIMEOUT_SECONDS:-30}
-  OPENWA_URL: ${OPENWA_URL:-http://openwa:2785/api}
-  OPENWA_API_KEY: ${OPENWA_API_KEY:-}
-  OPENWA_SESSION: ${OPENWA_SESSION:-}
-  OPENWA_SESSION_NAME: ${OPENWA_SESSION_NAME:-ai-sales-agent}
   WHATSAPP_GRAPH_API_BASE_URL: ${WHATSAPP_GRAPH_API_BASE_URL:-https://graph.facebook.com}
   WHATSAPP_GRAPH_API_VERSION: ${WHATSAPP_GRAPH_API_VERSION:-v23.0}
   WHATSAPP_TIMEOUT_SECONDS: ${WHATSAPP_TIMEOUT_SECONDS:-15}
@@ -158,23 +154,20 @@ services:
     init: true
     environment: *backend-environment
     command:
-      - sh
-      - -c
-      - |
-        export OPENWA_API_KEY="$$(cat /run/openwa/openwa_api_key)"
-        export OPENWA_SESSION="$$(cat /run/openwa/openwa_session)"
-        exec uvicorn app.main:app \
-          --host 0.0.0.0 \
-          --port 8000 \
-          --workers "${BACKEND_WORKERS:-2}" \
-          --proxy-headers \
-          --forwarded-allow-ips=*
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "${BACKEND_WORKERS:-2}",
+        "--proxy-headers",
+        "--forwarded-allow-ips=*",
+      ]
     depends_on:
       migration:
-        condition: service_completed_successfully
-      openwa:
-        condition: service_healthy
-      openwa-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -183,91 +176,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - openwa_runtime:/run/openwa:ro
     networks:
       - edge_net
       - data_net
-      - connector_net
-
-  openwa:
-    <<: *service-hardening
-    build:
-      context: ./services/openwa
-      dockerfile: Dockerfile
-    image: ai-sales-agent-openwa:${OPENWA_IMAGE_TAG:-local}
-    init: true
-    stop_grace_period: 45s
-    environment:
-      NODE_ENV: production
-      PORT: 2785
-      API_MASTER_KEY: ${OPENWA_API_KEY:-}
-      AUTO_START_SESSIONS: ${OPENWA_AUTO_START_SESSIONS:-true}
-      ENGINE_TYPE: ${OPENWA_ENGINE_TYPE:-whatsapp-web.js}
-      DATABASE_TYPE: sqlite
-      DATABASE_NAME: /app/data/openwa.sqlite
-      STORAGE_TYPE: local
-      STORAGE_LOCAL_PATH: /app/data/media
-      SESSION_DATA_PATH: /app/data/sessions
-      PUPPETEER_HEADLESS: "true"
-      PUPPETEER_DISABLE_DEV_SHM_USAGE: "false"
-      SESSION_RECONNECT_BASE_DELAY_MS: ${OPENWA_RECONNECT_BASE_DELAY_MS:-5000}
-      SESSION_RECONNECT_MAX_DELAY_MS: ${OPENWA_RECONNECT_MAX_DELAY_MS:-60000}
-      SESSION_INITIALIZE_TIMEOUT_MS: ${OPENWA_INITIALIZE_TIMEOUT_MS:-90000}
-      SESSION_HEARTBEAT_INTERVAL_MS: ${OPENWA_HEARTBEAT_INTERVAL_MS:-60000}
-      WEBHOOK_DELIVERY_TIMEOUT_MS: ${OPENWA_WEBHOOK_DELIVERY_TIMEOUT_MS:-90000}
-      OPENWA_STATUS_WEBHOOK_URL: http://backend:8000/api/v1/connectors/whatsapp/status/webhook
-      REDIS_ENABLED: "false"
-      SSRF_ALLOWED_HOSTS: backend
-    shm_size: "1gb"
-    ports:
-      # Public management access; protect port 2785 with a firewall/IP allowlist.
-      - "0.0.0.0:${OPENWA_PORT:-2785}:2785"
-    volumes:
-      - openwa_data:/app/data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "require('http').get('http://localhost:2785/api/health/ready',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
-        ]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 45s
-    networks:
-      - connector_net
-
-  openwa-init:
-    image: ai-sales-agent-openwa:${OPENWA_IMAGE_TAG:-local}
-    # The one-shot initializer must update the bind-mounted project .env and
-    # assign the runtime secret files to the non-root backend UID/GID.
-    user: "0:0"
-    entrypoint: ["/bin/sh", "/scripts/init-openwa.sh"]
-    environment:
-      OPENWA_BASE_URL: http://openwa:2785/api
-      OPENWA_API_KEY: ${OPENWA_API_KEY:-}
-      OPENWA_SESSION: ${OPENWA_SESSION:-}
-      OPENWA_SESSION_NAME: ${OPENWA_SESSION_NAME:-ai-sales-agent}
-      OPENWA_WEBHOOK_URL: http://backend:8000/api/v1/webhooks/whatsapp
-      OPENWA_INIT_TIMEOUT_SECONDS: ${OPENWA_INIT_TIMEOUT_SECONDS:-180}
-      BACKEND_UID: 10001
-      BACKEND_GID: 10001
-    depends_on:
-      openwa:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      disable: true
-    volumes:
-      - openwa_data:/openwa-data:ro
-      - openwa_runtime:/runtime
-      - ./scripts/init-openwa.sh:/scripts/init-openwa.sh:ro
-      - ./:/workspace
-    networks:
-      - connector_net
 
   frontend:
     <<: *service-hardening
@@ -311,11 +222,8 @@ volumes:
   mysql_data:
   redis_data:
   chroma_data:
-  openwa_data:
-  openwa_runtime:
 
 networks:
   edge_net:
-  connector_net:
   data_net:
     internal: true

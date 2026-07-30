@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.auth import Principal
 from app.connectors.whatsapp.client import (
     SECRET_CONFIG_KEYS,
+    SUPPORTED_CONFIG_KEYS,
     WhatsAppConnector,
 )
 from app.core.encryption import ConfigCipher
@@ -59,8 +60,7 @@ class ConnectorService:
         }
         effective_values.update({item.key: item.value for item in payload.values})
         if connector.provider == "whatsapp":
-            allowed_keys = {"session_id"}
-            if unsupported := set(keys) - allowed_keys:
+            if unsupported := set(keys) - SUPPORTED_CONFIG_KEYS:
                 raise ConflictError(
                     "WHATSAPP_CONFIG_KEY_UNSUPPORTED",
                     f"Unsupported WhatsApp configuration key: {sorted(unsupported)[0]}",
@@ -97,7 +97,7 @@ class ConnectorService:
             config.updated_by = principal.user_id
 
         if connector.provider == "whatsapp":
-            connector.external_account_id = str(effective_values["session_id"]).strip()
+            connector.external_account_id = str(effective_values["phone_number_id"]).strip()
             connector.status = "draft"
             connector.health_status = None
             connector.health_detail = {

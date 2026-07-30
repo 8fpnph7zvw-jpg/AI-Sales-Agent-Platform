@@ -33,7 +33,7 @@ class WhatsAppSession(BigIntPrimaryKeyMixin, TimestampMixin, Base):
         ),
         UniqueConstraint(
             "session_id",
-            name="uq_whatsapp_sessions_openwa_session",
+            name="uq_whatsapp_sessions_provider_session",
         ),
         UniqueConstraint(
             "session_name",

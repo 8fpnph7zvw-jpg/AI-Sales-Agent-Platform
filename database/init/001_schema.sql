@@ -198,7 +198,7 @@ CREATE TABLE connectors (
     deleted_at DATETIME(6) NULL,
     CONSTRAINT pk_connectors PRIMARY KEY (id),
     CONSTRAINT uq_connectors_public_id UNIQUE (public_id),
-    CONSTRAINT uq_connectors_openwa_session UNIQUE (session_id),
+    CONSTRAINT uq_connectors_provider_session UNIQUE (session_id),
     CONSTRAINT uq_connectors_id_tenant UNIQUE (id, tenant_id),
     CONSTRAINT tenant_provider_account
         UNIQUE (tenant_id, provider, external_account_id),
@@ -228,7 +228,7 @@ CREATE TABLE whatsapp_sessions (
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CONSTRAINT pk_whatsapp_sessions PRIMARY KEY (id),
     CONSTRAINT uq_whatsapp_sessions_connector UNIQUE (connector_id),
-    CONSTRAINT uq_whatsapp_sessions_openwa_session UNIQUE (session_id),
+    CONSTRAINT uq_whatsapp_sessions_provider_session UNIQUE (session_id),
     CONSTRAINT uq_whatsapp_sessions_session_name UNIQUE (session_name),
     CONSTRAINT ck_whatsapp_sessions_status_allowed
         CHECK (status IN ('created', 'starting', 'waiting_qr', 'connected', 'disconnected', 'error')),

@@ -5,8 +5,10 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
-from app.connectors.whatsapp.client import OpenWAClient
+from app.connectors.base import ConnectorContext
+from app.connectors.whatsapp.client import WhatsAppConnector
 from app.core.config import Settings
+from app.core.encryption import ConfigCipher
 from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
@@ -21,6 +23,7 @@ from app.modules.conversation.schemas import (
     ConversationMessageResponse,
     ConversationRead,
 )
+from app.schemas.protocol import Direction, MessageType, Party, TextContent, UnifiedMessageEnvelope
 
 
 class ConversationService:
@@ -29,10 +32,12 @@ class ConversationService:
         session: AsyncSession,
         repository: ConversationRepository,
         settings: Settings | None = None,
+        cipher: ConfigCipher | None = None,
     ) -> None:
         self.session = session
         self.repository = repository
         self.settings = settings
+        self.cipher = cipher
 
     async def create(
         self,
@@ -231,7 +236,6 @@ class ConversationService:
         is_live_whatsapp = bool(
             delivery_context
             and delivery_context[1].provider == "whatsapp"
-            and delivery_context[2] is not None
             and not delivery_context[0].external_contact_id.startswith("demo:")
         )
         if not is_live_whatsapp:
@@ -249,23 +253,52 @@ class ConversationService:
                 )
             )
         await self.session.commit()
-        if is_live_whatsapp:
-            customer_session, _connector, whatsapp_session = delivery_context
-            if self.settings is None or whatsapp_session is None:
+        if is_live_whatsapp and delivery_context:
+            if self.settings is None or self.cipher is None:
                 raise ConflictError(
                     "WHATSAPP_DELIVERY_NOT_CONFIGURED",
                     "WhatsApp delivery is not configured for this conversation.",
                 )
-            client = OpenWAClient(
+            customer_session, connector, _provider_session = delivery_context
+            configs = await self.repository.get_connector_configs(connector.id)
+            values = {
+                config.config_key: self.cipher.decrypt(
+                    config.value_encrypted,
+                    associated_data=(
+                        f"{connector.tenant_id}:{connector.id}:{config.config_key}"
+                    ),
+                )
+                for config in configs
+                if config.value_encrypted is not None
+            }
+            adapter = WhatsAppConnector(
+                ConnectorContext(
+                    tenant_id=principal.tenant_public_id,
+                    connector_id=connector.public_id,
+                    config=values,
+                ),
                 self.settings,
-                session_id=whatsapp_session.session_id,
-                session_name=whatsapp_session.session_name,
+            )
+            envelope = UnifiedMessageEnvelope(
+                idempotency_key=payload.idempotency_key,
+                tenant_id=principal.tenant_public_id,
+                channel="whatsapp",
+                direction=Direction.OUTBOUND,
+                message_type=MessageType.TEXT,
+                conversation_id=conversation.public_id,
+                sender=Party(
+                    id=str(values.get("phone_number_id") or connector.public_id)
+                ),
+                recipients=[Party(id=customer_session.external_contact_id)],
+                content=TextContent(text=payload.content),
             )
             try:
-                result = await client.send_text(
-                    customer_session.external_contact_id,
-                    payload.content,
-                )
+                result = await adapter.send(envelope)
+                if not result.accepted:
+                    raise ConflictError(
+                        "WHATSAPP_SEND_REJECTED",
+                        result.detail or "WhatsApp provider rejected the message.",
+                    )
             except Exception as exc:
                 message.status = "failed"
                 message.error_code = getattr(exc, "code", "WHATSAPP_SEND_FAILED")
@@ -276,7 +309,7 @@ class ConversationService:
                 await self.session.commit()
                 raise
             message.status = "sent"
-            message.external_message_id = result.message_id
+            message.external_message_id = result.provider_request_id
             message.sent_at = datetime.now(UTC)
             await self.session.commit()
         return self._response(message, conversation.public_id)

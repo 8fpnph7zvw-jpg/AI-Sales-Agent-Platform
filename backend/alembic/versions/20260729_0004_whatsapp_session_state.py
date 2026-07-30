@@ -1,4 +1,4 @@
-"""Add durable OpenWA binding and session diagnostics.
+"""Add durable WhatsApp provider binding and session diagnostics.
 
 Revision ID: 20260729_0004
 Revises: 20260728_0003
@@ -53,9 +53,9 @@ def upgrade() -> None:
         for constraint in inspector.get_unique_constraints("connectors")
         if constraint.get("name")
     }
-    if "uq_connectors_openwa_session" not in connector_unique_names:
+    if "uq_connectors_provider_session" not in connector_unique_names:
         op.create_unique_constraint(
-            "uq_connectors_openwa_session",
+            "uq_connectors_provider_session",
             "connectors",
             ["session_id"],
         )
@@ -101,9 +101,9 @@ def downgrade() -> None:
         for constraint in inspector.get_unique_constraints("connectors")
         if constraint.get("name")
     }
-    if "uq_connectors_openwa_session" in connector_unique_names:
+    if "uq_connectors_provider_session" in connector_unique_names:
         op.drop_constraint(
-            "uq_connectors_openwa_session",
+            "uq_connectors_provider_session",
             "connectors",
             type_="unique",
         )

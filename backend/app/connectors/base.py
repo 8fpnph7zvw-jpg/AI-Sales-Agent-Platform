@@ -74,7 +74,10 @@ class BaseConnector(ABC):
 
     @abstractmethod
     async def normalize_inbound(
-        self, payload: dict[str, Any], headers: dict[str, str]
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        raw_body: bytes = b"",
     ) -> list[UnifiedMessageEnvelope]:
         """Verify and convert a platform webhook into protocol envelopes."""
 

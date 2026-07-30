@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
 from app.core.config import get_settings
+from app.core.encryption import ConfigCipher
 from app.db.session import get_db
 from app.modules.conversation.repository import ConversationRepository
 from app.modules.conversation.schemas import (
@@ -24,10 +25,12 @@ management_router = APIRouter(prefix="/conversations", tags=["Conversation"])
 def get_conversation_service(
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ConversationService:
+    settings = get_settings()
     return ConversationService(
         session,
         ConversationRepository(session),
-        get_settings(),
+        settings,
+        ConfigCipher(settings),
     )
 
 
