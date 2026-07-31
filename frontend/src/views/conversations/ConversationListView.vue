@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
-import { ChatLineRound, Search } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ChatLineRound, Delete, Search } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox, type TableInstance } from "element-plus";
 
 import { getApiErrorMessage } from "@/api/client";
 import {
+  deleteConversation,
   getConversationMessages,
   getConversations,
   sendConversationMessage,
@@ -18,12 +19,15 @@ import { createUuid } from "@/utils/uuid";
 const loading = ref(false);
 const messageLoading = ref(false);
 const sending = ref(false);
+const deleting = ref(false);
 const error = ref("");
 const rows = ref<Conversation[]>([]);
 const total = ref(0);
 const selected = ref<Conversation | null>(null);
 const messages = ref<Message[]>([]);
 const messageText = ref("");
+const tableRef = ref<TableInstance>();
+const selectedRows = ref<Conversation[]>([]);
 const query = reactive({ page: 1, limit: 20, search: "", status: "" });
 const sourceLabels = {
   whatsapp: "WhatsApp",
@@ -83,6 +87,44 @@ async function send(): Promise<void> {
   }
 }
 
+function selectCurrentPage(): void {
+  tableRef.value?.toggleAllSelection();
+}
+
+async function removeConversations(targets: Conversation[]): Promise<void> {
+  if (!targets.length || deleting.value) return;
+  const label = targets.length === 1
+    ? `“${targets[0].customer_name || targets[0].customer_id}”的聊天记录`
+    : `选中的 ${targets.length} 条聊天记录`;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除${label}吗？删除后将无法从列表中恢复。`,
+      "确认删除",
+      { type: "warning", confirmButtonText: "确认删除", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+
+  deleting.value = true;
+  const results = await Promise.allSettled(targets.map((item) => deleteConversation(item.id)));
+  const failed = results.filter((result) => result.status === "rejected");
+  if (failed.length) {
+    const first = failed[0] as PromiseRejectedResult;
+    ElMessage.error(
+      failed.length === targets.length
+        ? getApiErrorMessage(first.reason)
+        : `${targets.length - failed.length} 条已删除，${failed.length} 条删除失败`,
+    );
+  } else {
+    ElMessage.success(targets.length === 1 ? "聊天记录已删除" : `已删除 ${targets.length} 条聊天记录`);
+  }
+  if (selected.value && targets.some((item) => item.id === selected.value?.id)) selected.value = null;
+  selectedRows.value = [];
+  deleting.value = false;
+  await load();
+}
+
 onMounted(load);
 </script>
 
@@ -90,7 +132,7 @@ onMounted(load);
   <div>
     <PageHeader title="聊天记录" description="查看跨渠道客户会话及消息历史" />
     <el-card shadow="never" class="content-card">
-      <div class="filter-bar">
+      <div class="filter-bar filter-bar--with-actions">
         <el-input v-model="query.search" clearable placeholder="搜索客户或会话" :prefix-icon="Search" @keyup.enter="load" />
         <el-select v-model="query.status" clearable placeholder="会话状态" @change="load">
           <el-option label="进行中" value="open" />
@@ -98,9 +140,28 @@ onMounted(load);
           <el-option label="已关闭" value="closed" />
         </el-select>
         <el-button @click="load">查询</el-button>
+        <span class="filter-bar__spacer" />
+        <el-button @click="selectCurrentPage">全选本页</el-button>
+        <el-button
+          type="danger"
+          plain
+          :icon="Delete"
+          :loading="deleting"
+          :disabled="!selectedRows.length"
+          @click="removeConversations(selectedRows)"
+        >
+          批量删除<span v-if="selectedRows.length">（{{ selectedRows.length }}）</span>
+        </el-button>
       </div>
       <ApiState :loading="loading" :error="error" :empty="!rows.length" empty-text="暂无会话记录" @retry="load">
-        <el-table :data="rows" @row-click="openConversation">
+        <el-table
+          ref="tableRef"
+          :data="rows"
+          row-key="id"
+          @row-click="openConversation"
+          @selection-change="selectedRows = $event"
+        >
+          <el-table-column type="selection" width="48" reserve-selection />
           <el-table-column label="客户" min-width="180">
             <template #default="{ row }: { row: Conversation }"><strong>{{ row.customer_name || row.customer_id }}</strong></template>
           </el-table-column>
@@ -116,6 +177,17 @@ onMounted(load);
           </el-table-column>
           <el-table-column label="更新时间" width="180">
             <template #default="{ row }: { row: Conversation }">{{ formatDateTime(row.last_message_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="92" fixed="right">
+            <template #default="{ row }: { row: Conversation }">
+              <el-button
+                text
+                type="danger"
+                :icon="Delete"
+                :loading="deleting"
+                @click.stop="removeConversations([row])"
+              >删除</el-button>
+            </template>
           </el-table-column>
         </el-table>
       </ApiState>

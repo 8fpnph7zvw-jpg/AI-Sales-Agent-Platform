@@ -62,12 +62,6 @@ const menuItems: MenuItem[] = [
     permissions: ["quotation.read_own", "quotation.read_all", "quotation.create"],
   },
   { path: "/connectors", label: "Connector管理", icon: Connection, permissions: ["connector.read"] },
-  {
-    path: "/connectors/whatsapp",
-    label: "WhatsApp Connector",
-    icon: ChatDotRound,
-    permissions: ["connector.read", "connector.manage"],
-  },
   { path: "/workflows", label: "Workflow管理", icon: MenuIcon, permissions: ["workflow.read"] },
   {
     path: "/system",

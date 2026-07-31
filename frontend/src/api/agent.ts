@@ -7,6 +7,9 @@ export async function chatWithAgent(payload: {
   idempotency_key: string;
   inputs?: Record<string, unknown>;
 }): Promise<AgentChatResult> {
-  const { data } = await apiClient.post<AgentChatResult>("/agent/chat", payload);
+  const { data } = await apiClient.post<AgentChatResult>("/agent/chat", payload, {
+    // Agent inference can legitimately take longer than normal CRUD requests.
+    timeout: 90_000,
+  });
   return data;
 }

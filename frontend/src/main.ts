@@ -6,8 +6,8 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import { installPermissionDirective } from "./directives/permission";
 import { router } from "./router";
-import "./styles/index.scss";
 import "element-plus/dist/index.css";
+import "./styles/index.scss";
 
 const app = createApp(App);
 app.use(createPinia());

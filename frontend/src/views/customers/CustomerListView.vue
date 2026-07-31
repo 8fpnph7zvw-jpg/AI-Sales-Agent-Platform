@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
-import { Plus, Search } from "@element-plus/icons-vue";
+import { Delete, Edit, Plus, Search } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 
 import { getApiErrorMessage } from "@/api/client";
-import { getCustomers } from "@/api/customers";
+import { deleteCustomer, getCustomers, updateCustomer } from "@/api/customers";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import CustomerFormDialog from "@/components/customers/CustomerFormDialog.vue";
+import {
+  CUSTOMER_CATEGORY_PREFIX,
+  customerCategoryOptions,
+  getCustomerCategory,
+  getCustomerCategoryOption,
+  withCustomerCategory,
+  type CustomerCategory,
+} from "@/constants/customers";
 import type { Customer } from "@/types/business";
 import { formatDateTime } from "@/utils/format";
 
@@ -15,6 +24,11 @@ const error = ref("");
 const rows = ref<Customer[]>([]);
 const total = ref(0);
 const createVisible = ref(false);
+const editVisible = ref(false);
+const editing = ref<Customer | null>(null);
+const savingCategory = ref(false);
+const deletingId = ref("");
+const editForm = reactive<{ lifecycle_stage: CustomerCategory }>({ lifecycle_stage: "lead" });
 const query = reactive({
   page: 1,
   limit: 20,
@@ -53,6 +67,54 @@ function intentTagType(level: string | null): "danger" | "warning" | "success" |
   return "success";
 }
 
+function openCategoryEditor(row: Customer): void {
+  editing.value = row;
+  editForm.lifecycle_stage = getCustomerCategory(row);
+  editVisible.value = true;
+}
+
+async function saveCategory(): Promise<void> {
+  if (!editing.value || savingCategory.value) return;
+  savingCategory.value = true;
+  try {
+    const updated = await updateCustomer(editing.value.id, {
+      lifecycle_stage: editForm.lifecycle_stage,
+      tags: withCustomerCategory(editing.value.tags, editForm.lifecycle_stage),
+    });
+    const index = rows.value.findIndex((item) => item.id === updated.id);
+    if (index >= 0) rows.value[index] = updated;
+    ElMessage.success("客户分类已更新");
+    editVisible.value = false;
+  } catch (requestError) {
+    ElMessage.error(getApiErrorMessage(requestError));
+  } finally {
+    savingCategory.value = false;
+  }
+}
+
+async function removeCustomer(row: Customer): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除客户“${row.name}”吗？此操作需要二次确认。`,
+      "删除客户",
+      { type: "warning", confirmButtonText: "确认删除", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+  deletingId.value = row.id;
+  try {
+    await deleteCustomer(row.id);
+    ElMessage.success("客户已删除");
+    if (rows.value.length === 1 && query.page > 1) query.page -= 1;
+    await load();
+  } catch (requestError) {
+    ElMessage.error(getApiErrorMessage(requestError));
+  } finally {
+    deletingId.value = "";
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -79,11 +141,13 @@ onMounted(load);
           @keyup.enter="search"
           @clear="search"
         />
-        <el-select v-model="query.lifecycle_stage" clearable placeholder="生命周期" @change="search">
-          <el-option label="潜在客户" value="lead" />
-          <el-option label="已确认商机" value="qualified" />
-          <el-option label="客户" value="customer" />
-          <el-option label="流失" value="lost" />
+        <el-select v-model="query.lifecycle_stage" clearable placeholder="客户分类" @change="search">
+          <el-option
+            v-for="option in customerCategoryOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
         </el-select>
         <el-button @click="search">查询</el-button>
       </div>
@@ -113,15 +177,45 @@ onMounted(load);
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="lifecycle_stage" label="阶段" width="130" />
+          <el-table-column label="客户分类" width="140">
+            <template #default="{ row }: { row: Customer }">
+              <el-tag :type="getCustomerCategoryOption(row).type" effect="light" round>
+                {{ getCustomerCategoryOption(row).label }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="标签" min-width="170">
             <template #default="{ row }: { row: Customer }">
-              <el-tag v-for="tag in row.tags.slice(0, 2)" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
-              <span v-if="row.tags.length > 2" class="muted-text">+{{ row.tags.length - 2 }}</span>
+              <el-tag
+                v-for="tag in row.tags.filter((item) => !item.startsWith(CUSTOMER_CATEGORY_PREFIX)).slice(0, 2)"
+                :key="tag"
+                size="small"
+                effect="plain"
+              >{{ tag }}</el-tag>
+              <span v-if="!row.tags.filter((item) => !item.startsWith(CUSTOMER_CATEGORY_PREFIX)).length" class="muted-text">—</span>
             </template>
           </el-table-column>
           <el-table-column label="更新时间" width="180">
             <template #default="{ row }: { row: Customer }">{{ formatDateTime(row.updated_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="160" fixed="right">
+            <template #default="{ row }: { row: Customer }">
+              <el-button
+                v-permission="['customer.update_own', 'customer.update_all']"
+                text
+                type="primary"
+                :icon="Edit"
+                @click="openCategoryEditor(row)"
+              >分类</el-button>
+              <el-button
+                v-permission="'customer.delete'"
+                text
+                type="danger"
+                :icon="Delete"
+                :loading="deletingId === row.id"
+                @click="removeCustomer(row)"
+              >删除</el-button>
+            </template>
           </el-table-column>
         </el-table>
       </ApiState>
@@ -139,5 +233,27 @@ onMounted(load);
     </el-card>
 
     <CustomerFormDialog v-model="createVisible" @created="load" />
+
+    <el-dialog v-model="editVisible" title="编辑客户分类" width="460px" destroy-on-close>
+      <el-form :model="editForm" label-position="top">
+        <el-form-item label="客户">
+          <div class="readonly-field"><strong>{{ editing?.name }}</strong><small>{{ editing?.company_name || "个人客户" }}</small></div>
+        </el-form-item>
+        <el-form-item label="客户分类" required>
+          <el-select v-model="editForm.lifecycle_stage" class="full-width">
+            <el-option
+              v-for="option in customerCategoryOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingCategory" @click="saveCategory">保存分类</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

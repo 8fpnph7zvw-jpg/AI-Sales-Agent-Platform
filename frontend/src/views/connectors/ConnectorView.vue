@@ -43,6 +43,30 @@ const whatsappForm = reactive({
   app_secret: "",
 });
 const isWhatsApp = computed(() => selected.value?.provider === "whatsapp");
+const capabilityLabels: Record<string, string> = {
+  receive_messages: "消息接收",
+  send_messages: "消息发送",
+  delivery_receipts: "状态通知",
+  webhooks: "Webhook",
+};
+const statusLabels: Record<string, string> = {
+  active: "已启用",
+  inactive: "未启用",
+  disabled: "已停用",
+};
+const healthLabels: Record<string, string> = {
+  healthy: "连接正常",
+  unhealthy: "连接异常",
+  unknown: "待检测",
+};
+
+function capabilityLabel(value: string): string {
+  return capabilityLabels[value] || "扩展能力";
+}
+
+function providerLabel(value: string): string {
+  return value === "whatsapp" ? "WhatsApp 商务渠道" : "企业消息渠道";
+}
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -192,11 +216,11 @@ onMounted(load);
               {{ connector.provider.slice(0, 2).toUpperCase() }}
             </span>
             <el-tag :type="connector.status === 'active' ? 'success' : 'info'">
-              {{ connector.status }}
+              {{ statusLabels[connector.status] || "待配置" }}
             </el-tag>
           </div>
           <h3>{{ connector.name }}</h3>
-          <p>{{ connector.provider }} · {{ connector.external_account_id }}</p>
+          <p>{{ providerLabel(connector.provider) }}</p>
           <div class="connector-capabilities">
             <el-tag
               v-for="capability in connector.capabilities"
@@ -204,13 +228,13 @@ onMounted(load);
               size="small"
               effect="plain"
             >
-              {{ capability }}
+              {{ capabilityLabel(capability) }}
             </el-tag>
           </div>
           <div class="connector-health">
             <span>
               <i :class="{ healthy: connector.health_status === 'healthy' }" />
-              {{ connector.health_status || "未检查" }}
+              {{ healthLabels[connector.health_status || "unknown"] || "待检测" }}
             </span>
             <small>{{ formatDateTime(connector.last_health_check_at) }}</small>
           </div>
@@ -232,7 +256,7 @@ onMounted(load);
       destroy-on-close
     >
       <el-alert
-        title="WhatsApp 使用 provider adapter；Graph API 地址由服务端管理，租户凭据在此加密保存。"
+        title="WhatsApp 商务渠道凭据将加密保存，平台不会在页面中展示敏感信息。"
         type="info"
         show-icon
         :closable="false"
@@ -245,18 +269,18 @@ onMounted(load);
         label-position="top"
         class="connector-config-form"
       >
-        <el-form-item label="Provider Adapter" required>
+        <el-form-item label="连接方式" required>
           <el-select v-model="whatsappForm.adapter">
             <el-option label="WhatsApp Cloud API" value="cloud_api" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Phone Number ID" required>
+        <el-form-item label="商务号码 ID" required>
           <el-input
             v-model="whatsappForm.phone_number_id"
             :placeholder="configuredPlaceholder('phone_number_id', 'Meta Phone Number ID')"
           />
         </el-form-item>
-        <el-form-item label="Access Token" required>
+        <el-form-item label="访问凭据" required>
           <el-input
             v-model="whatsappForm.access_token"
             type="password"
@@ -264,7 +288,7 @@ onMounted(load);
             :placeholder="configuredPlaceholder('access_token', '永久访问令牌')"
           />
         </el-form-item>
-        <el-form-item label="Verify Token" required>
+        <el-form-item label="验证凭据" required>
           <el-input
             v-model="whatsappForm.verify_token"
             type="password"
@@ -272,7 +296,7 @@ onMounted(load);
             :placeholder="configuredPlaceholder('verify_token', 'Webhook Verify Token')"
           />
         </el-form-item>
-        <el-form-item label="App Secret" required>
+        <el-form-item label="应用密钥" required>
           <el-input
             v-model="whatsappForm.app_secret"
             type="password"
@@ -280,7 +304,7 @@ onMounted(load);
             :placeholder="configuredPlaceholder('app_secret', 'Meta App Secret')"
           />
         </el-form-item>
-        <el-form-item label="Webhook URL">
+        <el-form-item label="Webhook 地址">
           <el-input :model-value="webhookUrl" readonly />
         </el-form-item>
       </el-form>
@@ -291,11 +315,11 @@ onMounted(load);
           :key="index"
           class="config-row"
         >
-          <el-input v-model="item.key" placeholder="配置键，例如 api_key" />
+          <el-input v-model="item.key" placeholder="配置项名称" />
           <el-input
             v-model="item.value"
             :type="item.is_secret ? 'password' : 'text'"
-            placeholder="配置值"
+            placeholder="配置项内容"
           />
           <el-checkbox v-model="item.is_secret">敏感</el-checkbox>
           <el-button text type="danger" @click="genericConfigRows.splice(index, 1)">

@@ -16,8 +16,10 @@ const customerLoading = ref(false);
 const submitting = ref(false);
 const customers = ref<Customer[]>([]);
 const result = ref<AgentChatResult | null>(null);
+const lastError = ref("");
 const conversationId = ref("");
 const conversationCustomerId = ref("");
+const requestKey = ref("");
 const form = reactive({
   customer_id: "",
   query: "",
@@ -42,6 +44,13 @@ function customerChanged(): void {
   conversationId.value = "";
   conversationCustomerId.value = "";
   result.value = null;
+  lastError.value = "";
+  requestKey.value = "";
+}
+
+function queryChanged(): void {
+  requestKey.value = "";
+  lastError.value = "";
 }
 
 async function ensureConversation(): Promise<string> {
@@ -62,19 +71,28 @@ async function ensureConversation(): Promise<string> {
 }
 
 async function submit(): Promise<void> {
-  if (!(await formRef.value?.validate().catch(() => false))) return;
+  if (submitting.value) return;
   submitting.value = true;
+  const valid = await formRef.value?.validate().catch(() => false);
+  if (!valid) {
+    submitting.value = false;
+    return;
+  }
   result.value = null;
+  lastError.value = "";
   try {
     const activeConversationId = await ensureConversation();
+    if (!requestKey.value) requestKey.value = createUuid();
     result.value = await chatWithAgent({
       conversation_id: activeConversationId,
       query: form.query,
-      idempotency_key: createUuid(),
+      idempotency_key: requestKey.value,
       inputs: {},
     });
+    requestKey.value = "";
   } catch (error) {
-    ElMessage.error(getApiErrorMessage(error));
+    lastError.value = getApiErrorMessage(error);
+    ElMessage.error(lastError.value);
   } finally {
     submitting.value = false;
   }
@@ -104,6 +122,7 @@ onMounted(loadCustomers);
               class="full-width"
               filterable
               :loading="customerLoading"
+              :disabled="submitting"
               placeholder="请选择测试客户"
               @change="customerChanged"
             >
@@ -122,13 +141,16 @@ onMounted(loadCustomers);
               :rows="8"
               maxlength="20000"
               show-word-limit
+              :disabled="submitting"
               placeholder="例如：Wireless Earphone 订购 500 件的价格、交期和运输方式是什么？"
+              @input="queryChanged"
             />
           </el-form-item>
           <el-button
             type="primary"
             :icon="Promotion"
             :loading="submitting"
+            :disabled="submitting"
             @click="submit"
           >
             运行 Agent
@@ -145,6 +167,15 @@ onMounted(loadCustomers);
             </div>
           </div>
         </template>
+        <el-alert
+          v-if="lastError && !submitting"
+          :title="lastError"
+          description="本次请求未完成，可直接重试；系统会复用请求标识，避免产生重复记录。"
+          type="error"
+          show-icon
+          :closable="false"
+          class="agent-error"
+        />
         <div v-if="submitting" class="agent-thinking">
           <span /><span /><span />
           <p>Agent 正在分析客户需求…</p>

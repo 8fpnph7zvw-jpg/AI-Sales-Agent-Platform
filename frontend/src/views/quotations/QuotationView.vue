@@ -78,6 +78,10 @@ function applyProduct(item: QuotationItemInput): void {
   item.quantity = Number(product.min_order_qty || 1);
 }
 
+function selectedProduct(item: QuotationItemInput): Product | undefined {
+  return products.value.find((candidate) => candidate.id === item.product_id);
+}
+
 async function openCreate(): Promise<void> {
   Object.assign(form, {
     customer_id: "",
@@ -101,6 +105,10 @@ async function openCreate(): Promise<void> {
 async function submit(): Promise<void> {
   if (!form.customer_id || !form.items.length) {
     ElMessage.warning("请选择客户并添加至少一个报价项");
+    return;
+  }
+  if (form.items.some((item) => !item.product_id || item.quantity <= 0)) {
+    ElMessage.warning("请选择产品并填写有效数量");
     return;
   }
   saving.value = true;
@@ -190,27 +198,58 @@ onMounted(load);
           <el-form-item label="运费"><el-input-number v-model="form.shipping_amount" :min="0" :precision="2" class="full-width" /></el-form-item>
           <el-form-item label="付款条件"><el-input v-model="form.payment_terms" /></el-form-item>
         </div>
-        <div class="section-heading"><strong>报价明细</strong><el-button text type="primary" :icon="Plus" @click="form.items.push(newItem())">添加项目</el-button></div>
-        <div v-for="(item, index) in form.items" :key="index" class="quotation-item">
-          <el-select
-            v-model="item.product_id"
-            filterable
-            clearable
-            placeholder="选择产品"
-            @change="applyProduct(item)"
-          >
-            <el-option
-              v-for="product in products"
-              :key="product.id"
-              :label="`${product.name} (${product.sku})`"
-              :value="product.id"
-            />
-          </el-select>
-          <el-input v-model="item.name" placeholder="产品名称" />
-          <el-input-number v-model="item.quantity" :min="0.0001" :precision="2" />
-          <el-input v-model="item.unit" placeholder="单位" />
-          <el-input-number v-model="item.unit_price" :min="0" :precision="2" />
-          <el-button :icon="Delete" circle text type="danger" @click="form.items.splice(index, 1)" />
+        <div class="section-heading">
+          <div><strong>报价明细</strong><span>选择产品后自动带出名称、单位和基础价格</span></div>
+          <el-button text type="primary" :icon="Plus" @click="form.items.push(newItem())">添加项目</el-button>
+        </div>
+        <div v-for="(item, index) in form.items" :key="index" class="quotation-item-card">
+          <div class="quotation-item-card__header">
+            <strong>产品 {{ index + 1 }}</strong>
+            <el-button :icon="Delete" text type="danger" @click="form.items.splice(index, 1)">移除</el-button>
+          </div>
+          <div class="quotation-item-grid">
+            <el-form-item label="产品选择" required>
+              <el-select
+                v-model="item.product_id"
+                filterable
+                clearable
+                placeholder="搜索产品名称或 SKU"
+                class="full-width"
+                @change="applyProduct(item)"
+              >
+                <el-option
+                  v-for="product in products"
+                  :key="product.id"
+                  :label="`${product.name} · ${product.sku}`"
+                  :value="product.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="产品名称">
+              <div class="readonly-field">
+                <strong>{{ selectedProduct(item)?.name || "选择产品后自动显示" }}</strong>
+                <small>{{ selectedProduct(item)?.sku || "—" }}</small>
+              </div>
+            </el-form-item>
+            <el-form-item label="数量" required>
+              <el-input-number
+                v-model="item.quantity"
+                :min="0.01"
+                :precision="2"
+                controls-position="right"
+                class="full-width quantity-input"
+              />
+            </el-form-item>
+            <el-form-item label="单位">
+              <div class="unit-display">{{ item.unit || "—" }}</div>
+            </el-form-item>
+            <el-form-item label="单价">
+              <el-input-number v-model="item.unit_price" :min="0" :precision="2" class="full-width" />
+            </el-form-item>
+            <el-form-item label="备注" class="quotation-item-note">
+              <el-input v-model="item.description" type="textarea" :rows="2" placeholder="可填写规格、包装或交付说明" />
+            </el-form-item>
+          </div>
         </div>
         <el-form-item label="备注"><el-input v-model="form.notes" type="textarea" :rows="3" /></el-form-item>
       </el-form>

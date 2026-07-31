@@ -4,6 +4,11 @@ import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 
 import { getApiErrorMessage } from "@/api/client";
 import { createCustomer } from "@/api/customers";
+import {
+  customerCategoryOptions,
+  withCustomerCategory,
+  type CustomerCategory,
+} from "@/constants/customers";
 import type { CustomerCreate } from "@/types/business";
 
 const props = defineProps<{ modelValue: boolean }>();
@@ -24,6 +29,7 @@ const form = reactive<CustomerCreate>({
   source_type: "",
   tags: [],
   notes: "",
+  lifecycle_stage: "lead",
 });
 const rules: FormRules = {
   name: [{ required: true, message: "请输入客户姓名", trigger: "blur" }],
@@ -46,6 +52,7 @@ watch(
       source_type: "",
       tags: [],
       notes: "",
+      lifecycle_stage: "lead",
     });
   },
 );
@@ -57,7 +64,8 @@ async function submit(): Promise<void> {
     await createCustomer({
       ...form,
       country_code: form.country_code?.toUpperCase(),
-      tags: form.tags,
+      lifecycle_stage: form.lifecycle_stage,
+      tags: withCustomerCategory(form.tags, form.lifecycle_stage as CustomerCategory),
     });
     ElMessage.success("客户创建成功");
     emit("update:modelValue", false);
@@ -100,6 +108,16 @@ async function submit(): Promise<void> {
         </el-form-item>
         <el-form-item label="客户来源" prop="source_type">
           <el-input v-model="form.source_type" placeholder="website / whatsapp" />
+        </el-form-item>
+        <el-form-item label="客户分类" prop="lifecycle_stage">
+          <el-select v-model="form.lifecycle_stage" class="full-width" placeholder="选择客户分类">
+            <el-option
+              v-for="option in customerCategoryOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="标签" prop="tags">
           <el-select

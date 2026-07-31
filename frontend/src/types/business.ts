@@ -34,6 +34,12 @@ export interface CustomerCreate {
   source_ref?: string;
   tags: string[];
   notes?: string;
+  lifecycle_stage?: string;
+}
+
+export interface CustomerUpdate {
+  lifecycle_stage?: string;
+  tags?: string[];
 }
 
 export type CustomerPage = PageResult<Customer>;
@@ -204,4 +210,16 @@ export interface DashboardSummary {
     title: string;
     occurred_at: string;
   }>;
+}
+
+export interface DashboardInsights {
+  today_visitors: number;
+  ai_handled_today: number;
+  pending_follow_up: number;
+  won_opportunities: number;
+  identified_customers_today: number;
+  high_intent_customers: number;
+  region_distribution: Array<{ name: string; value: number }>;
+  popular_products: Array<{ name: string; inquiries: number; unit: string }>;
+  trend: Array<{ date: string; inquiries: number; ai_replies: number }>;
 }

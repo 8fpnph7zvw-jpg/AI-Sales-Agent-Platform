@@ -40,3 +40,7 @@ export async function sendConversationMessage(payload: {
   const { data } = await apiClient.post<Message>("/conversation/message", payload);
   return data;
 }
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  await apiClient.delete(`/conversations/${conversationId}`);
+}

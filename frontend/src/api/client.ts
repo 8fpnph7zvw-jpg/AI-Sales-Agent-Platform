@@ -103,6 +103,8 @@ export function getApiErrorMessage(error: unknown): string {
   if (Array.isArray(body?.detail)) {
     return body.detail.map((item) => item.msg).join("；");
   }
-  if (error.code === "ECONNABORTED") return "请求超时，请检查网络连接";
+  if (error.code === "ECONNABORTED") return "请求处理时间较长，请稍后重试；请勿重复提交";
+  if (!error.response) return "网络连接异常，请检查网络后重试";
+  if (error.response.status >= 500) return "服务暂时繁忙，请稍后重试";
   return error.message || "服务暂时不可用";
 }
