@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -36,6 +36,7 @@ from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
 from app.models.customer.customer_session import CustomerSession
+from app.models.system.outbox_event import OutboxEvent
 from app.schemas.protocol import (
     Direction,
     MessageType,
@@ -323,6 +324,17 @@ class WhatsAppService:
                 idempotency_key,
             )
         inbound, conversation, customer_session, customer = context
+        if webhook_log.status == "retry_pending":
+            logger.info(
+                "whatsapp_ai_retry_already_pending request_id=%s customer_id=%s "
+                "conversation_id=%s error_code=%s retry_count=%s final_status=pending",
+                webhook_log.trace_id,
+                customer.public_id,
+                conversation.public_id,
+                webhook_log.error_code,
+                webhook_log.attempt_count,
+            )
+            return True
         run = await self.repository.get_latest_run(inbound.id)
         if run and run.status in {"queued", "running"}:
             now = datetime.now(UTC)
@@ -368,21 +380,70 @@ class WhatsAppService:
                 user=customer.public_id,
                 conversation_id=None,
                 inputs={},
+                request_context={
+                    "request_id": webhook_log.trace_id,
+                    "customer_id": customer.public_id,
+                    "conversation_id": conversation.public_id,
+                },
             )
         except Exception as exc:
+            retry_count = int(getattr(exc, "retry_count", 0))
             run.status = "failed"
             run.error_code = getattr(exc, "code", "DIFY_REQUEST_FAILED")
             run.error_message = str(exc)[:1000]
+            run.input_redacted = {
+                **(run.input_redacted or {}),
+                "request_id": webhook_log.trace_id,
+                "customer_id": customer.public_id,
+                "conversation_id": conversation.public_id,
+                "retry_count": retry_count,
+                "final_status": "pending_background",
+            }
             run.completed_at = datetime.now(UTC)
             self._mark_failed(webhook_log, exc)
-            await self.session.commit()
-            logger.exception(
-                "whatsapp_dify_failed tenant_id=%s connector_id=%s event_id=%s",
-                runtime.tenant.id,
-                runtime.connector.public_id,
-                event_id,
+            webhook_log.status = "retry_pending"
+            webhook_log.attempt_count = retry_count
+            webhook_log.next_retry_at = datetime.now(UTC) + timedelta(seconds=5)
+            self.session.add(
+                OutboxEvent(
+                    tenant_id=runtime.tenant.id,
+                    aggregate_type="whatsapp_ai_retry",
+                    aggregate_id=webhook_log.public_id,
+                    event_type="ai.whatsapp.retry.requested.v1",
+                    payload={
+                        "webhook_log_id": webhook_log.public_id,
+                        "request_id": webhook_log.trace_id,
+                        "customer_id": customer.public_id,
+                        "conversation_id": conversation.public_id,
+                        "error_code": run.error_code,
+                        "retry_count": retry_count,
+                        "final_status": "pending_background",
+                    },
+                    available_at=webhook_log.next_retry_at,
+                )
             )
-            raise
+            await self.session.commit()
+            logger.error(
+                "whatsapp_ai_request_final request_id=%s customer_id=%s "
+                "conversation_id=%s error_code=%s retry_count=%s "
+                "final_status=pending_background",
+                webhook_log.trace_id,
+                customer.public_id,
+                conversation.public_id,
+                run.error_code,
+                retry_count,
+                exc_info=True,
+            )
+            return False
+
+        run.input_redacted = {
+            **(run.input_redacted or {}),
+            "request_id": webhook_log.trace_id,
+            "customer_id": customer.public_id,
+            "conversation_id": conversation.public_id,
+            "retry_count": dify_result.retry_count,
+            "final_status": "succeeded",
+        }
 
         outbound = await self._create_outbound(
             runtime,
@@ -398,6 +459,103 @@ class WhatsAppService:
             event_id,
         )
         return False
+
+    async def retry_pending_webhook(self, webhook_log_id: str) -> None:
+        retry_context = await self.repository.get_webhook_retry_context(webhook_log_id)
+        if retry_context is None:
+            raise ResourceNotFoundError("WhatsApp AI retry task")
+        webhook_log, connector, tenant = retry_context
+        if webhook_log.status == "processed":
+            return
+
+        runtime = await self._runtime(connector, tenant)
+        idempotency_key = (
+            f"whatsapp:inbound:{connector.public_id}:{webhook_log.provider_event_id}"
+        )
+        message_context = await self.repository.get_message_context(
+            tenant.id,
+            idempotency_key,
+        )
+        if message_context is None:
+            raise ResourceNotFoundError("WhatsApp inbound message")
+        inbound, conversation, customer_session, customer = message_context
+
+        previous_run = await self.repository.get_latest_run(inbound.id)
+        if previous_run and previous_run.status == "succeeded" and previous_run.output_message_id:
+            outbound = await self.repository.get_message(previous_run.output_message_id)
+            if outbound is not None:
+                if outbound.status != "sent":
+                    await self._send_outbound(
+                        runtime,
+                        customer_session,
+                        outbound,
+                        webhook_log,
+                    )
+                else:
+                    await self._mark_processed(webhook_log)
+                return
+
+        run = AiAgentRun(
+            tenant_id=tenant.id,
+            conversation_id=conversation.id,
+            trigger_message_id=inbound.id,
+            run_type="whatsapp_chat_retry",
+            status="running",
+            input_redacted={
+                "query_length": len(inbound.content_text or ""),
+                "channel": "whatsapp",
+                "request_id": webhook_log.trace_id,
+                "customer_id": customer.public_id,
+                "conversation_id": conversation.public_id,
+                "final_status": "running_background",
+            },
+            started_at=datetime.now(UTC),
+        )
+        self.session.add(run)
+        webhook_log.status = "processing"
+        webhook_log.attempt_count += 1
+        await self.session.commit()
+
+        try:
+            result = await self.dify.chat(
+                query=inbound.content_text or "",
+                user=customer.public_id,
+                conversation_id=None,
+                inputs={},
+                request_context={
+                    "request_id": webhook_log.trace_id,
+                    "customer_id": customer.public_id,
+                    "conversation_id": conversation.public_id,
+                },
+            )
+        except Exception as exc:
+            retry_count = int(getattr(exc, "retry_count", 0))
+            run.status = "failed"
+            run.error_code = getattr(exc, "code", "DIFY_REQUEST_FAILED")
+            run.error_message = str(exc)[:1000]
+            run.input_redacted = {
+                **(run.input_redacted or {}),
+                "retry_count": retry_count,
+                "final_status": "pending_background",
+            }
+            run.completed_at = datetime.now(UTC)
+            self._mark_failed(webhook_log, exc)
+            webhook_log.status = "retry_pending"
+            await self.session.commit()
+            raise
+
+        run.input_redacted = {
+            **(run.input_redacted or {}),
+            "retry_count": result.retry_count,
+            "final_status": "succeeded",
+        }
+        outbound = await self._create_outbound(
+            runtime,
+            conversation.id,
+            run,
+            result,
+        )
+        await self._send_outbound(runtime, customer_session, outbound, webhook_log)
 
     async def _create_inbound_context(
         self,
@@ -607,6 +765,7 @@ class WhatsAppService:
         webhook_log.processed_at = datetime.now(UTC)
         webhook_log.error_code = None
         webhook_log.error_message = None
+        webhook_log.next_retry_at = None
         await self.session.commit()
 
     @staticmethod

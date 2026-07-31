@@ -44,5 +44,16 @@ class ServiceConfigurationError(AppError):
 
 
 class UpstreamServiceError(AppError):
-    def __init__(self, service: str, message: str) -> None:
-        super().__init__(502, "UPSTREAM_SERVICE_ERROR", f"{service}: {message}")
+    def __init__(
+        self,
+        service: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        upstream_status_code: int | None = None,
+        error_code: str = "UPSTREAM_SERVICE_ERROR",
+    ) -> None:
+        super().__init__(502, error_code, f"{service}: {message}")
+        self.retryable = retryable
+        self.upstream_status_code = upstream_status_code
+        self.retry_count = 0

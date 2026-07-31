@@ -136,6 +136,26 @@ class BadRequestAsyncClient(FakeAsyncClient):
         return FakeStreamContext(response)
 
 
+class TransientServerAsyncClient(FakeAsyncClient):
+    attempts = 0
+
+    def stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+    ) -> FakeStreamContext:
+        del json, headers
+        type(self).attempts += 1
+        if type(self).attempts <= 3:
+            request = httpx.Request(method, f"https://api.dify.ai/v1/{path}")
+            response = httpx.Response(503, request=request, json={"message": "temporary"})
+            return FakeStreamContext(response)
+        return FakeStreamContext(FakeResponse())
+
+
 @pytest.mark.asyncio
 async def test_dify_chat_uses_server_side_key_and_v1_relative_path(monkeypatch) -> None:
     monkeypatch.setattr("app.integrations.dify.client.httpx.AsyncClient", FakeAsyncClient)
@@ -243,3 +263,50 @@ async def test_dify_400_logs_status_and_response_text(
 
     assert "status_code=400" in caplog.text
     assert "unexpected inputs" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dify_retries_transient_failures_with_required_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    TransientServerAsyncClient.attempts = 0
+    monkeypatch.setattr(
+        "app.integrations.dify.client.httpx.AsyncClient",
+        TransientServerAsyncClient,
+    )
+    monkeypatch.setattr("app.integrations.dify.client.asyncio.sleep", fake_sleep)
+    client = DifyClient(
+        Settings(
+            _env_file=None,
+            dify_api_base_url="https://api.dify.ai/v1",
+            dify_api_key="app-test-key",
+        )
+    )
+
+    with caplog.at_level("INFO"):
+        result = await client.chat(
+            query="Need product details",
+            user="customer-1",
+            conversation_id=None,
+            inputs={},
+            request_context={
+                "request_id": "request-1",
+                "customer_id": "customer-1",
+                "conversation_id": "conversation-1",
+            },
+        )
+
+    assert delays == [1.0, 3.0, 5.0]
+    assert TransientServerAsyncClient.attempts == 4
+    assert result.answer == "Enterprise response"
+    assert result.retry_count == 3
+    assert "request_id=request-1" in caplog.text
+    assert "customer_id=customer-1" in caplog.text
+    assert "conversation_id=conversation-1" in caplog.text
+    assert "retry_count=3 final_status=succeeded" in caplog.text

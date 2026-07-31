@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
@@ -27,10 +27,15 @@ def get_ai_agent_service(
 @router.post("/chat", response_model=AgentChatResponse)
 async def agent_chat(
     payload: AgentChatRequest,
+    request: Request,
     service: Annotated[AiAgentService, Depends(get_ai_agent_service)],
     principal: Annotated[
         Principal,
         Depends(require_any_permission("ai_agent.chat")),
     ],
 ) -> AgentChatResponse:
-    return await service.chat(principal, payload)
+    return await service.chat(
+        principal,
+        payload,
+        request_id=request.headers.get("X-Request-ID"),
+    )

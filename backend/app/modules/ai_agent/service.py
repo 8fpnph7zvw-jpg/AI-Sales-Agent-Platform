@@ -30,6 +30,8 @@ class AiAgentService:
         self,
         principal: Principal,
         payload: AgentChatRequest,
+        *,
+        request_id: str | None = None,
     ) -> AgentChatResponse:
         context = await self.repository.get_conversation_for_update(
             principal.tenant_id,
@@ -105,14 +107,37 @@ class AiAgentService:
                 user=customer_public_id,
                 conversation_id=None,
                 inputs=payload.inputs,
+                request_context={
+                    "request_id": request_id,
+                    "customer_id": customer_public_id,
+                    "conversation_id": conversation.public_id,
+                },
             )
         except Exception as exc:
+            retry_count = int(getattr(exc, "retry_count", 0))
             run.status = "failed"
             run.error_code = getattr(exc, "code", "DIFY_REQUEST_FAILED")
             run.error_message = str(exc)[:1000]
+            run.input_redacted = {
+                **(run.input_redacted or {}),
+                "request_id": request_id,
+                "customer_id": customer_public_id,
+                "conversation_id": conversation.public_id,
+                "retry_count": retry_count,
+                "final_status": "failed",
+            }
             run.completed_at = datetime.now(UTC)
             await self.session.commit()
             raise
+
+        run.input_redacted = {
+            **(run.input_redacted or {}),
+            "request_id": request_id,
+            "customer_id": customer_public_id,
+            "conversation_id": conversation.public_id,
+            "retry_count": result.retry_count,
+            "final_status": "succeeded",
+        }
 
         return await self._complete_run(
             principal,

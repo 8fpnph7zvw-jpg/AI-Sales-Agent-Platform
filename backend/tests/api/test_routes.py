@@ -75,9 +75,10 @@ async def test_agent_chat_endpoint_returns_200() -> None:
     app = create_app()
 
     class FakeAgentService:
-        async def chat(self, principal, payload) -> AgentChatResponse:
+        async def chat(self, principal, payload, *, request_id=None) -> AgentChatResponse:
             assert principal.tenant_id == 1
             assert payload.query == "风衣"
+            assert request_id == "request-agent-1"
             return AgentChatResponse(
                 run_id="01ARZ3NDEKTSV4RRFFQ69G5FA1",
                 conversation_id=payload.conversation_id,
@@ -114,6 +115,7 @@ async def test_agent_chat_endpoint_returns_200() -> None:
     ) as client:
         response = await client.post(
             "/api/v1/agent/chat",
+            headers={"X-Request-ID": "request-agent-1"},
             json={
                 "conversation_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
                 "query": "风衣",

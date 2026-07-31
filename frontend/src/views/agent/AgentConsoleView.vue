@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { MagicStick, Promotion } from "@element-plus/icons-vue";
-import { ElMessage, type FormInstance, type FormRules } from "element-plus";
+import { type FormInstance, type FormRules } from "element-plus";
 
 import { chatWithAgent } from "@/api/agent";
-import { getApiErrorMessage } from "@/api/client";
 import { createConversation } from "@/api/conversations";
 import { getCustomers } from "@/api/customers";
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -16,7 +15,6 @@ const customerLoading = ref(false);
 const submitting = ref(false);
 const customers = ref<Customer[]>([]);
 const result = ref<AgentChatResult | null>(null);
-const lastError = ref("");
 const conversationId = ref("");
 const conversationCustomerId = ref("");
 const requestKey = ref("");
@@ -33,8 +31,8 @@ async function loadCustomers(): Promise<void> {
   customerLoading.value = true;
   try {
     customers.value = (await getCustomers({ limit: 100, offset: 0 })).data;
-  } catch (error) {
-    ElMessage.error(getApiErrorMessage(error));
+  } catch {
+    customers.value = [];
   } finally {
     customerLoading.value = false;
   }
@@ -44,13 +42,11 @@ function customerChanged(): void {
   conversationId.value = "";
   conversationCustomerId.value = "";
   result.value = null;
-  lastError.value = "";
   requestKey.value = "";
 }
 
 function queryChanged(): void {
   requestKey.value = "";
-  lastError.value = "";
 }
 
 async function ensureConversation(): Promise<string> {
@@ -78,8 +74,6 @@ async function submit(): Promise<void> {
     submitting.value = false;
     return;
   }
-  result.value = null;
-  lastError.value = "";
   try {
     const activeConversationId = await ensureConversation();
     if (!requestKey.value) requestKey.value = createUuid();
@@ -90,9 +84,9 @@ async function submit(): Promise<void> {
       inputs: {},
     });
     requestKey.value = "";
-  } catch (error) {
-    lastError.value = getApiErrorMessage(error);
-    ElMessage.error(lastError.value);
+  } catch {
+    // AI failures are retried and recorded internally. Never expose them in the chat UI.
+    requestKey.value = "";
   } finally {
     submitting.value = false;
   }
@@ -167,15 +161,6 @@ onMounted(loadCustomers);
             </div>
           </div>
         </template>
-        <el-alert
-          v-if="lastError && !submitting"
-          :title="lastError"
-          description="本次请求未完成，可直接重试；系统会复用请求标识，避免产生重复记录。"
-          type="error"
-          show-icon
-          :closable="false"
-          class="agent-error"
-        />
         <div v-if="submitting" class="agent-thinking">
           <span /><span /><span />
           <p>Agent 正在分析客户需求…</p>

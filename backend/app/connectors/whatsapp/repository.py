@@ -222,6 +222,27 @@ class WhatsAppRepository:
             )
         )
 
+    async def get_webhook_retry_context(
+        self,
+        webhook_log_id: str,
+    ) -> tuple[WebhookLog, Connector, Tenant] | None:
+        row = (
+            await self.session.execute(
+                select(WebhookLog, Connector, Tenant)
+                .join(Connector, Connector.id == WebhookLog.connector_id)
+                .join(Tenant, Tenant.id == WebhookLog.tenant_id)
+                .where(
+                    WebhookLog.public_id == webhook_log_id,
+                    Connector.deleted_at.is_(None),
+                    Tenant.status == "active",
+                    Tenant.deleted_at.is_(None),
+                )
+                .limit(1)
+                .with_for_update()
+            )
+        ).one_or_none()
+        return (row[0], row[1], row[2]) if row else None
+
     async def get_customer_context(
         self,
         tenant_id: int,

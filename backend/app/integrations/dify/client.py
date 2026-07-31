@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
@@ -13,6 +14,8 @@ from app.core.config import Settings
 from app.core.exceptions import ServiceConfigurationError, UpstreamServiceError
 
 logger = logging.getLogger(__name__)
+
+RETRY_DELAYS_SECONDS = (1.0, 3.0, 5.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +31,7 @@ class DifyChatResult:
     latency_ms: int | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
     raw_metadata: dict[str, Any] = field(default_factory=dict)
+    retry_count: int = 0
 
 
 class DifyClient:
@@ -35,6 +39,66 @@ class DifyClient:
         self.settings = settings
 
     async def chat(
+        self,
+        *,
+        query: str,
+        user: str,
+        conversation_id: str | None,
+        inputs: dict[str, Any],
+        request_context: dict[str, str | None] | None = None,
+    ) -> DifyChatResult:
+        context = request_context or {}
+        for retry_count in range(len(RETRY_DELAYS_SECONDS) + 1):
+            try:
+                result = await self._chat_once(
+                    query=query,
+                    user=user,
+                    conversation_id=conversation_id,
+                    inputs=inputs,
+                )
+            except Exception as exc:
+                error_code = getattr(exc, "code", type(exc).__name__)
+                if not _is_retryable(exc) or retry_count >= len(RETRY_DELAYS_SECONDS):
+                    if hasattr(exc, "retry_count"):
+                        exc.retry_count = retry_count
+                    logger.error(
+                        "ai_request_final request_id=%s customer_id=%s conversation_id=%s "
+                        "error_code=%s retry_count=%s final_status=failed",
+                        context.get("request_id"),
+                        context.get("customer_id") or user,
+                        context.get("conversation_id") or conversation_id,
+                        error_code,
+                        retry_count,
+                    )
+                    raise
+                delay = RETRY_DELAYS_SECONDS[retry_count]
+                logger.warning(
+                    "ai_request_retry request_id=%s customer_id=%s conversation_id=%s "
+                    "error_code=%s retry_count=%s final_status=retrying delay_seconds=%s",
+                    context.get("request_id"),
+                    context.get("customer_id") or user,
+                    context.get("conversation_id") or conversation_id,
+                    error_code,
+                    retry_count + 1,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            result = replace(result, retry_count=retry_count)
+            logger.info(
+                "ai_request_final request_id=%s customer_id=%s conversation_id=%s "
+                "error_code=none retry_count=%s final_status=succeeded",
+                context.get("request_id"),
+                context.get("customer_id") or user,
+                context.get("conversation_id") or conversation_id,
+                retry_count,
+            )
+            return result
+
+        raise RuntimeError("Dify retry loop terminated unexpectedly")
+
+    async def _chat_once(
         self,
         *,
         query: str,
@@ -88,7 +152,12 @@ class DifyClient:
                     response.raise_for_status()
                     data = await _read_streaming_chat_response(response)
         except httpx.TimeoutException as exc:
-            raise UpstreamServiceError("Dify", "request timed out") from exc
+            raise UpstreamServiceError(
+                "Dify",
+                "request timed out",
+                retryable=True,
+                error_code="DIFY_TIMEOUT",
+            ) from exc
         except httpx.HTTPStatusError as exc:
             response_text = exc.response.text
             logger.error(
@@ -102,6 +171,8 @@ class DifyClient:
                     "authentication failed (HTTP 401). DIFY_API_KEY must be the "
                     "App API key for the application serving /chat-messages, "
                     "not a Dataset/Knowledge key.",
+                    upstream_status_code=401,
+                    error_code="DIFY_HTTP_401",
                 ) from exc
             raise UpstreamServiceError(
                 "Dify",
@@ -109,13 +180,26 @@ class DifyClient:
                     f"returned HTTP {exc.response.status_code}: "
                     f"{response_text[:1000]}"
                 ),
+                retryable=exc.response.status_code in {500, 502, 503},
+                upstream_status_code=exc.response.status_code,
+                error_code=f"DIFY_HTTP_{exc.response.status_code}",
             ) from exc
         except httpx.HTTPError as exc:
-            raise UpstreamServiceError("Dify", "request failed") from exc
+            raise UpstreamServiceError(
+                "Dify",
+                "request failed",
+                retryable=True,
+                error_code="DIFY_NETWORK_ERROR",
+            ) from exc
 
         answer = str(data.get("answer") or "").strip()
         if not answer:
-            raise UpstreamServiceError("Dify", "response did not contain an answer")
+            raise UpstreamServiceError(
+                "Dify",
+                "response did not contain an answer",
+                retryable=True,
+                error_code="DIFY_EMPTY_RESPONSE",
+            )
         logger.info(
             "dify_chat_response status=success answer_length=%s "
             "conversation_id_present=%s",
@@ -158,7 +242,12 @@ async def _read_streaming_chat_response(response: httpx.Response) -> dict[str, A
         try:
             data = json.loads(raw_data)
         except json.JSONDecodeError as exc:
-            raise UpstreamServiceError("Dify", "returned malformed SSE data") from exc
+            raise UpstreamServiceError(
+                "Dify",
+                "returned malformed SSE data",
+                retryable=True,
+                error_code="DIFY_STREAM_ERROR",
+            ) from exc
         if not isinstance(data, dict):
             continue
 
@@ -167,7 +256,12 @@ async def _read_streaming_chat_response(response: httpx.Response) -> dict[str, A
             answer_parts.append(str(data.get("answer") or ""))
         elif event == "error":
             message = str(data.get("message") or data.get("code") or "streaming request failed")
-            raise UpstreamServiceError("Dify", message)
+            raise UpstreamServiceError(
+                "Dify",
+                message,
+                retryable=True,
+                error_code="DIFY_STREAM_ERROR",
+            )
 
         for key in ("conversation_id", "task_id"):
             if data.get(key):
@@ -215,3 +309,7 @@ def dify_key_type(value: str) -> str:
     if normalized.startswith(("dataset-", "knowledge-")):
         return "dataset"
     return "unknown" if normalized else "missing"
+
+
+def _is_retryable(exc: Exception) -> bool:
+    return isinstance(exc, UpstreamServiceError) and exc.retryable

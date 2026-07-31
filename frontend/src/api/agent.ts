@@ -9,7 +9,8 @@ export async function chatWithAgent(payload: {
 }): Promise<AgentChatResult> {
   const { data } = await apiClient.post<AgentChatResult>("/agent/chat", payload, {
     // Agent inference can legitimately take longer than normal CRUD requests.
-    timeout: 90_000,
+    // Covers the server-side Dify timeout plus the 1s/3s/5s retry backoff window.
+    timeout: 180_000,
   });
   return data;
 }

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     whatsapp_timeout_seconds: float = 15.0
     whatsapp_processing_timeout_seconds: int = 60
     whatsapp_webhook_max_bytes: int = 1_048_576
+    whatsapp_ai_retry_worker_enabled: bool = True
+    whatsapp_ai_retry_poll_seconds: float = 2.0
+    whatsapp_ai_retry_max_delay_seconds: int = 300
     config_encryption_key: str = ""
     config_encryption_key_version: str = "v1"
     rag_embedding_dimensions: int = 384

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -13,14 +14,27 @@ from app.core.config import get_settings
 from app.core.exceptions import AppError
 from app.db.session import dispose_engine
 from app.integrations.dify.client import dify_key_type
+from app.workers.whatsapp_ai_retry import run_whatsapp_ai_retry_worker
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    await dispose_engine()
+    settings = get_settings()
+    stop_event = asyncio.Event()
+    retry_worker = None
+    if settings.whatsapp_ai_retry_worker_enabled:
+        retry_worker = asyncio.create_task(run_whatsapp_ai_retry_worker(stop_event))
+    try:
+        yield
+    finally:
+        stop_event.set()
+        if retry_worker is not None:
+            retry_worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await retry_worker
+        await dispose_engine()
 
 
 def create_app() -> FastAPI:
