@@ -1,3 +1,0 @@
-[submodule "service/openwa"]
-	path = service/openwa
-	url = https://github.com/open-wa/OpenWA.git
