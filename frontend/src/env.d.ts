@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
   readonly VITE_DEV_PROXY_TARGET?: string;
+  readonly VITE_WHATSAPP_GATEWAY_BASE_URL?: string;
+  readonly VITE_WHATSAPP_GATEWAY_PROXY_TARGET?: string;
 }
 
 interface ImportMeta {

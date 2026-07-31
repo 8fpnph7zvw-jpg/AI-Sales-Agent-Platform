@@ -12,6 +12,7 @@ import {
 } from "@/api/connectors";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
+import WhatsAppWebConnectPanel from "@/components/connectors/WhatsAppWebConnectPanel.vue";
 import type { Connector } from "@/types/business";
 import { formatDateTime } from "@/utils/format";
 
@@ -43,6 +44,9 @@ const whatsappForm = reactive({
   app_secret: "",
 });
 const isWhatsApp = computed(() => selected.value?.provider === "whatsapp");
+const isWhatsAppWeb = computed(
+  () => isWhatsApp.value && whatsappForm.adapter === "webjs_gateway",
+);
 const capabilityLabels: Record<string, string> = {
   receive_messages: "消息接收",
   send_messages: "消息发送",
@@ -105,10 +109,23 @@ async function openConfig(row: Connector): Promise<void> {
     const status = await getWhatsAppConfigStatus(row.id);
     configuredKeys.value = status.configured_keys;
     webhookUrl.value = status.webhook_url;
+    const savedAdapter = localStorage.getItem(`whatsapp-adapter:${row.id}`);
+    whatsappForm.adapter = savedAdapter === "webjs_gateway"
+      ? savedAdapter
+      : status.adapter === "webjs_gateway"
+        ? status.adapter
+        : "cloud_api";
   } catch (requestError) {
     ElMessage.error(getApiErrorMessage(requestError));
   } finally {
     statusLoading.value = false;
+  }
+}
+
+function selectWhatsAppAdapter(value: string): void {
+  whatsappForm.adapter = value;
+  if (selected.value) {
+    localStorage.setItem(`whatsapp-adapter:${selected.value.id}`, value);
   }
 }
 
@@ -122,6 +139,7 @@ function configuredPlaceholder(key: string, fallback: string): string {
 
 async function save(): Promise<void> {
   if (!selected.value) return;
+  if (isWhatsAppWeb.value) return;
   saving.value = true;
   try {
     if (isWhatsApp.value) {
@@ -252,11 +270,14 @@ onMounted(load);
     <el-dialog
       v-model="dialogVisible"
       :title="`配置 ${selected?.name || 'Connector'}`"
-      width="680px"
+      :width="isWhatsAppWeb ? '760px' : '680px'"
       destroy-on-close
     >
       <el-alert
-        title="WhatsApp 商务渠道凭据将加密保存，平台不会在页面中展示敏感信息。"
+        v-if="isWhatsApp"
+        :title="isWhatsAppWeb
+          ? 'WhatsApp Web 登录由 Gateway 的 LocalAuth 安全保存，本页面不会读取登录数据。'
+          : 'WhatsApp Cloud API 凭据将加密保存，平台不会在页面中展示敏感信息。'"
         type="info"
         show-icon
         :closable="false"
@@ -270,43 +291,54 @@ onMounted(load);
         class="connector-config-form"
       >
         <el-form-item label="连接方式" required>
-          <el-select v-model="whatsappForm.adapter">
+          <el-select
+            :model-value="whatsappForm.adapter"
+            class="full-width"
+            @update:model-value="selectWhatsAppAdapter"
+          >
             <el-option label="WhatsApp Cloud API" value="cloud_api" />
+            <el-option label="WhatsApp Web" value="webjs_gateway" />
           </el-select>
         </el-form-item>
-        <el-form-item label="商务号码 ID" required>
-          <el-input
-            v-model="whatsappForm.phone_number_id"
-            :placeholder="configuredPlaceholder('phone_number_id', 'Meta Phone Number ID')"
-          />
-        </el-form-item>
-        <el-form-item label="访问凭据" required>
-          <el-input
-            v-model="whatsappForm.access_token"
-            type="password"
-            show-password
-            :placeholder="configuredPlaceholder('access_token', '永久访问令牌')"
-          />
-        </el-form-item>
-        <el-form-item label="验证凭据" required>
-          <el-input
-            v-model="whatsappForm.verify_token"
-            type="password"
-            show-password
-            :placeholder="configuredPlaceholder('verify_token', 'Webhook Verify Token')"
-          />
-        </el-form-item>
-        <el-form-item label="应用密钥" required>
-          <el-input
-            v-model="whatsappForm.app_secret"
-            type="password"
-            show-password
-            :placeholder="configuredPlaceholder('app_secret', 'Meta App Secret')"
-          />
-        </el-form-item>
-        <el-form-item label="Webhook 地址">
-          <el-input :model-value="webhookUrl" readonly />
-        </el-form-item>
+        <template v-if="!isWhatsAppWeb">
+          <el-form-item label="商务号码 ID" required>
+            <el-input
+              v-model="whatsappForm.phone_number_id"
+              :placeholder="configuredPlaceholder('phone_number_id', 'Meta Phone Number ID')"
+            />
+          </el-form-item>
+          <el-form-item label="访问凭据" required>
+            <el-input
+              v-model="whatsappForm.access_token"
+              type="password"
+              show-password
+              :placeholder="configuredPlaceholder('access_token', '永久访问令牌')"
+            />
+          </el-form-item>
+          <el-form-item label="验证凭据" required>
+            <el-input
+              v-model="whatsappForm.verify_token"
+              type="password"
+              show-password
+              :placeholder="configuredPlaceholder('verify_token', 'Webhook Verify Token')"
+            />
+          </el-form-item>
+          <el-form-item label="应用密钥" required>
+            <el-input
+              v-model="whatsappForm.app_secret"
+              type="password"
+              show-password
+              :placeholder="configuredPlaceholder('app_secret', 'Meta App Secret')"
+            />
+          </el-form-item>
+          <el-form-item label="Webhook 地址">
+            <el-input :model-value="webhookUrl" readonly />
+          </el-form-item>
+        </template>
+        <WhatsAppWebConnectPanel
+          v-else
+          :initial-session-id="selected?.session_id || 'customer001'"
+        />
       </el-form>
 
       <div v-else>
@@ -343,14 +375,14 @@ onMounted(load);
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button
-          v-if="isWhatsApp"
+          v-if="isWhatsApp && !isWhatsAppWeb"
           :icon="Connection"
           :loading="testing"
           @click="testConnection"
         >
           测试连接
         </el-button>
-        <el-button type="primary" :loading="saving" @click="save">
+        <el-button v-if="!isWhatsAppWeb" type="primary" :loading="saving" @click="save">
           加密保存
         </el-button>
       </template>
