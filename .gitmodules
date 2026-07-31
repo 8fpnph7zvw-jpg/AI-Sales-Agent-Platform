@@ -1,3 +1,3 @@
 [submodule "service/openwa"]
 	path = service/openwa
-	url = https://github.com/open-wa/wa-automate-nodejs.git
+	url = https://github.com/open-wa/OpenWA.git
