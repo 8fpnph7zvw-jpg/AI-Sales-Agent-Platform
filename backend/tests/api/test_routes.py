@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.api.dependencies.auth import Principal, get_current_principal
+from app.core.config import get_settings
 from app.main import create_app
 from app.modules.ai_agent.router import get_ai_agent_service
 from app.modules.ai_agent.schemas import AgentChatResponse, AgentUsage
@@ -16,6 +17,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/conversations", "get"),
     ("/api/v1/conversations", "post"),
     ("/api/v1/conversations/{conversation_id}/messages", "get"),
+    ("/api/v1/conversations/message", "post"),
     ("/api/v1/conversation/message", "post"),
     ("/api/v1/agent/chat", "post"),
     ("/api/v1/lead-score", "post"),
@@ -157,3 +159,33 @@ async def test_whatsapp_send_endpoint_requires_bearer_token() -> None:
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTHENTICATION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_gateway_endpoint_rejects_invalid_shared_token(monkeypatch) -> None:
+    monkeypatch.setenv("WHATSAPP_GATEWAY_TOKEN", "gateway-secret")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/conversations/message",
+                headers={"X-WhatsApp-Gateway-Token": "wrong"},
+                json={
+                    "phone": "15551234567",
+                    "message": "hello",
+                    "channel": "whatsapp",
+                    "timestamp": 1785376800,
+                    "message_id": "webjs-message-1",
+                    "session_id": "customer001",
+                    "connector_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "WHATSAPP_GATEWAY_TOKEN_INVALID"

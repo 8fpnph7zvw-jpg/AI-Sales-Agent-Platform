@@ -97,7 +97,10 @@ class ConnectorService:
             config.updated_by = principal.user_id
 
         if connector.provider == "whatsapp":
-            connector.external_account_id = str(effective_values["phone_number_id"]).strip()
+            external_account_id = effective_values.get("phone_number_id")
+            if str(effective_values.get("adapter") or "cloud_api") == "webjs_gateway":
+                external_account_id = effective_values.get("session_id")
+            connector.external_account_id = str(external_account_id).strip()
             connector.status = "draft"
             connector.health_status = None
             connector.health_detail = {

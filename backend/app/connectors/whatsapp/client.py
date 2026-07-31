@@ -15,16 +15,25 @@ from app.connectors.whatsapp.providers.cloud_api import (
     CLOUD_API_REQUIRED_CONFIG_KEYS,
     CLOUD_API_SECRET_CONFIG_KEYS,
 )
+from app.connectors.whatsapp.providers.webjs_gateway import (
+    WEBJS_GATEWAY_REQUIRED_CONFIG_KEYS,
+    WEBJS_GATEWAY_SECRET_CONFIG_KEYS,
+)
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ServiceConfigurationError
 from app.schemas.protocol import UnifiedMessageEnvelope
 
 DEFAULT_ADAPTER = "cloud_api"
 SUPPORTED_CONFIG_KEYS = frozenset(
-    {"adapter", *CLOUD_API_REQUIRED_CONFIG_KEYS}
+    {"adapter", *CLOUD_API_REQUIRED_CONFIG_KEYS, *WEBJS_GATEWAY_REQUIRED_CONFIG_KEYS}
 )
-REQUIRED_CONFIG_KEYS = CLOUD_API_REQUIRED_CONFIG_KEYS
-SECRET_CONFIG_KEYS = CLOUD_API_SECRET_CONFIG_KEYS
+SECRET_CONFIG_KEYS = CLOUD_API_SECRET_CONFIG_KEYS | WEBJS_GATEWAY_SECRET_CONFIG_KEYS
+
+
+def required_config_keys(adapter_key: str) -> tuple[str, ...]:
+    if adapter_key == "webjs_gateway":
+        return WEBJS_GATEWAY_REQUIRED_CONFIG_KEYS
+    return CLOUD_API_REQUIRED_CONFIG_KEYS
 
 
 @connector_registry.register("whatsapp")
@@ -62,7 +71,11 @@ class WhatsAppConnector(BaseConnector):
             **context.config,
             "graph_api_base_url": self.settings.whatsapp_graph_api_base_url,
             "graph_api_version": self.settings.whatsapp_graph_api_version,
-            "timeout_seconds": self.settings.whatsapp_timeout_seconds,
+            "timeout_seconds": (
+                self.settings.whatsapp_gateway_timeout_seconds
+                if adapter_key == "webjs_gateway"
+                else self.settings.whatsapp_timeout_seconds
+            ),
         }
         self.adapter_key = adapter_key
         self.adapter = adapter_type(provider_config)

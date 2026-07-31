@@ -3,6 +3,11 @@
 !backend/**
 !database/
 !database/**
+!service/
+!service/whatsapp-web.js/
+!service/whatsapp-web.js/**
+!service/whatsapp-connector/
+!service/whatsapp-connector/**
 
 backend/.venv/
 backend/.pytest_cache/
@@ -11,3 +16,6 @@ backend/.ruff_cache/
 **/*.pyc
 .env
 .git/
+service/whatsapp-web.js/.git
+service/whatsapp-connector/node_modules/
+service/whatsapp-connector/sessions/*

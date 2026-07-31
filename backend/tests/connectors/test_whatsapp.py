@@ -9,6 +9,7 @@ import pytest
 from app.connectors.base import ConnectorContext
 from app.connectors.whatsapp.client import WhatsAppConnector
 from app.connectors.whatsapp.providers.cloud_api import WhatsAppCloudAPIAdapter
+from app.connectors.whatsapp.providers.webjs_gateway import WhatsAppWebJsGatewayAdapter
 from app.core.config import Settings
 from app.core.exceptions import AppError
 from app.schemas.protocol import Direction, MessageType, Party, TextContent, UnifiedMessageEnvelope
@@ -23,6 +24,15 @@ def cloud_config() -> dict[str, str]:
         "app_secret": "app-secret",
         "graph_api_base_url": "https://graph.facebook.com",
         "graph_api_version": "v23.0",
+    }
+
+
+def gateway_config() -> dict[str, str]:
+    return {
+        "adapter": "webjs_gateway",
+        "gateway_url": "http://whatsapp-connector:3001",
+        "gateway_token": "gateway-secret",
+        "session_id": "customer001",
     }
 
 
@@ -148,4 +158,80 @@ async def test_cloud_api_send_uses_normalized_message(monkeypatch: pytest.Monkey
         "to": "8613800138000",
         "type": "text",
         "text": {"body": "Reply"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_webjs_gateway_normalizes_authenticated_inbound_message() -> None:
+    adapter = WhatsAppWebJsGatewayAdapter(gateway_config())
+    payload = {
+        "phone": "+86 138-0013-8000",
+        "message": "Hello from webjs",
+        "channel": "whatsapp",
+        "timestamp": 1785376800,
+        "message_id": "webjs-message-1",
+        "session_id": "customer001",
+        "connector_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    }
+    envelopes = await adapter.normalize_inbound(
+        payload,
+        {"x-whatsapp-gateway-token": "gateway-secret"},
+        b"{}",
+        tenant_id="tenant-1",
+        connector_id=payload["connector_id"],
+    )
+
+    assert len(envelopes) == 1
+    assert envelopes[0].sender.id == "8613800138000"
+    assert envelopes[0].external_message_id == "webjs-message-1"
+    assert envelopes[0].content == TextContent(text="Hello from webjs")
+    assert envelopes[0].context.attributes["provider"] == "webjs_gateway"
+
+
+@pytest.mark.asyncio
+async def test_webjs_gateway_rejects_invalid_token() -> None:
+    adapter = WhatsAppWebJsGatewayAdapter(gateway_config())
+    with pytest.raises(AppError, match="authentication failed"):
+        await adapter.normalize_inbound(
+            {"phone": "15551234567", "message": "Hello", "message_id": "message-1"},
+            {"x-whatsapp-gateway-token": "wrong"},
+            b"{}",
+            tenant_id="tenant-1",
+            connector_id="connector-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_webjs_gateway_send_calls_node_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = WhatsAppWebJsGatewayAdapter(gateway_config())
+    captured: dict[str, object] = {}
+
+    async def fake_request(method: str, path: str, **kwargs: object) -> dict[str, object]:
+        captured.update({"method": method, "path": path, **kwargs})
+        return {"messageId": "webjs-outbound-1", "status": "SENT"}
+
+    monkeypatch.setattr(adapter, "_request", fake_request)
+    message = UnifiedMessageEnvelope(
+        idempotency_key="whatsapp:webjs:outbound-1",
+        tenant_id="tenant-1",
+        channel="whatsapp",
+        direction=Direction.OUTBOUND,
+        message_type=MessageType.TEXT,
+        conversation_id="conversation-1",
+        sender=Party(id="customer001"),
+        recipients=[Party(id="15551234567")],
+        content=TextContent(text="AI reply"),
+    )
+    result = await adapter.send(message)
+
+    assert result.accepted is True
+    assert result.provider_request_id == "webjs-outbound-1"
+    assert captured == {
+        "method": "POST",
+        "path": "/api/whatsapp/send",
+        "json": {
+            "phone": "15551234567",
+            "message": "AI reply",
+            "sessionId": "customer001",
+        },
     }

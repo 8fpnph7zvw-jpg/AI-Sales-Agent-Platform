@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -55,3 +55,13 @@ class WhatsAppProviderPayload(BaseModel):
     """Opaque payload accepted at the provider-neutral webhook boundary."""
 
     data: dict[str, Any]
+
+
+class WhatsAppGatewayInboundRequest(BaseModel):
+    phone: str = Field(min_length=5, max_length=32)
+    message: str = Field(min_length=1, max_length=20_000)
+    channel: Literal["whatsapp"] = "whatsapp"
+    timestamp: int | float | None = Field(default=None, gt=0)
+    message_id: str | None = Field(default=None, min_length=1, max_length=255)
+    session_id: str | None = Field(default=None, min_length=1, max_length=64)
+    connector_id: str | None = Field(default=None, min_length=26, max_length=26)

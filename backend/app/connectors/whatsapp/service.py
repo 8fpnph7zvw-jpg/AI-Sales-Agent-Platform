@@ -13,19 +13,24 @@ from app.api.dependencies.auth import Principal
 from app.connectors.base import ConnectorContext
 from app.connectors.whatsapp.client import (
     DEFAULT_ADAPTER,
-    REQUIRED_CONFIG_KEYS,
     WhatsAppConnector,
+    required_config_keys,
 )
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     WhatsAppConfigStatusResponse,
+    WhatsAppGatewayInboundRequest,
     WhatsAppSendResponse,
     WhatsAppTestResponse,
     WhatsAppWebhookResponse,
 )
 from app.core.config import Settings
 from app.core.encryption import ConfigCipher
-from app.core.exceptions import ConflictError, ResourceNotFoundError
+from app.core.exceptions import (
+    ConflictError,
+    ResourceNotFoundError,
+    ServiceConfigurationError,
+)
 from app.integrations.dify.client import DifyChatResult, DifyClient
 from app.models.ai.ai_agent_run import AiAgentRun
 from app.models.auth.tenant import Tenant
@@ -93,7 +98,7 @@ class WhatsAppService:
             connector_id=connector.public_id,
             adapter=adapter,
             configured_keys=configured,
-            required_keys=list(REQUIRED_CONFIG_KEYS),
+            required_keys=list(required_config_keys(adapter)),
             webhook_url=webhook_url,
         )
 
@@ -183,6 +188,45 @@ class WhatsAppService:
                 response.processed += 1
         return response
 
+    async def handle_gateway_message(
+        self,
+        payload: WhatsAppGatewayInboundRequest,
+        *,
+        raw_body: bytes,
+        headers: dict[str, str],
+    ) -> WhatsAppWebhookResponse:
+        connector_id = payload.connector_id or self.settings.whatsapp_gateway_connector_id
+        if not connector_id:
+            raise ServiceConfigurationError(
+                "connector_id or WHATSAPP_GATEWAY_CONNECTOR_ID is required."
+            )
+        session_id = payload.session_id or self.settings.whatsapp_gateway_session_id
+        context = await self.repository.get_connector_context_by_public_id(
+            connector_id,
+            for_update=True,
+        )
+        if context is None:
+            raise ResourceNotFoundError("Active WhatsApp connector")
+        connector, tenant = context
+        runtime = self._gateway_runtime(
+            connector,
+            tenant,
+            session_id=session_id,
+        )
+        envelopes = await runtime.adapter.normalize_inbound(
+            payload.model_dump(),
+            headers,
+            raw_body,
+        )
+        response = WhatsAppWebhookResponse()
+        for envelope in envelopes:
+            duplicate = await self._process_message(runtime, envelope, headers, raw_body)
+            if duplicate:
+                response.duplicates += 1
+            else:
+                response.processed += 1
+        return response
+
     async def send_message(
         self,
         principal: Principal,
@@ -254,6 +298,29 @@ class WhatsAppService:
         )
         return WhatsAppRuntime(connector, tenant, values, adapter)
 
+    def _gateway_runtime(
+        self,
+        connector: Connector,
+        tenant: Tenant,
+        *,
+        session_id: str,
+    ) -> WhatsAppRuntime:
+        values = {
+            "adapter": "webjs_gateway",
+            "gateway_url": self.settings.whatsapp_gateway_url,
+            "gateway_token": self.settings.whatsapp_gateway_token,
+            "session_id": session_id,
+        }
+        adapter = WhatsAppConnector(
+            ConnectorContext(
+                tenant_id=tenant.public_id,
+                connector_id=connector.public_id,
+                config=values,
+            ),
+            self.settings,
+        )
+        return WhatsAppRuntime(connector, tenant, values, adapter)
+
     async def _configured_adapter(self, connector: Connector) -> str:
         for config in await self.repository.get_configs(connector.id):
             if config.config_key == "adapter" and config.value_encrypted is not None:
@@ -297,6 +364,7 @@ class WhatsAppService:
                     "request_id": headers.get("x-request-id"),
                     "signature_present": "x-hub-signature-256" in headers,
                     "provider_adapter": runtime.adapter.adapter_key,
+                    "gateway_session_id": runtime.config.get("session_id"),
                 },
                 payload_redacted={
                     "from": self._redact_phone(envelope.sender.id),
@@ -468,7 +536,13 @@ class WhatsAppService:
         if webhook_log.status == "processed":
             return
 
-        runtime = await self._runtime(connector, tenant)
+        if (webhook_log.headers_redacted or {}).get("provider_adapter") == "webjs_gateway":
+            session_id = str(
+                (webhook_log.headers_redacted or {}).get("gateway_session_id") or ""
+            )
+            runtime = self._gateway_runtime(connector, tenant, session_id=session_id)
+        else:
+            runtime = await self._runtime(connector, tenant)
         idempotency_key = (
             f"whatsapp:inbound:{connector.public_id}:{webhook_log.provider_event_id}"
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from app.api.dependencies.auth import Principal, require_any_permission
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     WhatsAppConfigStatusResponse,
+    WhatsAppGatewayInboundRequest,
     WhatsAppSendRequest,
     WhatsAppSendResponse,
     WhatsAppTestRequest,
@@ -26,6 +28,7 @@ from app.integrations.dify.client import DifyClient
 webhook_router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"])
 management_router = APIRouter(prefix="/connectors/whatsapp", tags=["WhatsApp Connector"])
 send_router = APIRouter(prefix="/whatsapp", tags=["WhatsApp Connector"])
+gateway_router = APIRouter(prefix="/conversations", tags=["WhatsApp Gateway"])
 
 
 def get_whatsapp_service(
@@ -90,6 +93,40 @@ async def receive_whatsapp_webhook(
         connector_id,
         raw_body=raw_body,
         payload=payload,
+        headers={key.lower(): value for key, value in request.headers.items()},
+    )
+
+
+@gateway_router.post("/message", response_model=WhatsAppWebhookResponse)
+async def receive_whatsapp_gateway_message(
+    payload: WhatsAppGatewayInboundRequest,
+    request: Request,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+) -> WhatsAppWebhookResponse:
+    settings = get_settings()
+    if not settings.whatsapp_gateway_token:
+        raise AppError(
+            503,
+            "WHATSAPP_GATEWAY_NOT_CONFIGURED",
+            "WHATSAPP_GATEWAY_TOKEN is not configured.",
+        )
+    supplied_token = request.headers.get("X-WhatsApp-Gateway-Token", "")
+    if not hmac.compare_digest(supplied_token, settings.whatsapp_gateway_token):
+        raise AppError(
+            403,
+            "WHATSAPP_GATEWAY_TOKEN_INVALID",
+            "WhatsApp gateway authentication failed.",
+        )
+    raw_body = await request.body()
+    if len(raw_body) > settings.whatsapp_webhook_max_bytes:
+        raise AppError(
+            413,
+            "WHATSAPP_PAYLOAD_TOO_LARGE",
+            "WhatsApp gateway payload exceeds the configured size limit.",
+        )
+    return await service.handle_gateway_message(
+        payload,
+        raw_body=raw_body,
         headers={key.lower(): value for key, value in request.headers.items()},
     )
 
