@@ -32,8 +32,6 @@ class Settings(BaseSettings):
     whatsapp_gateway_url: str = "http://whatsapp-connector:3001"
     whatsapp_gateway_token: str = ""
     whatsapp_gateway_timeout_seconds: float = 20.0
-    whatsapp_gateway_connector_id: str = ""
-    whatsapp_gateway_session_id: str = "customer001"
     whatsapp_ai_retry_worker_enabled: bool = True
     whatsapp_ai_retry_poll_seconds: float = 2.0
     whatsapp_ai_retry_max_delay_seconds: int = 300

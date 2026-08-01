@@ -23,8 +23,6 @@ x-backend-environment: &backend-environment
   WHATSAPP_GATEWAY_URL: ${WHATSAPP_GATEWAY_URL:-http://whatsapp-connector:3001}
   WHATSAPP_GATEWAY_TOKEN: ${WHATSAPP_GATEWAY_TOKEN:?Set WHATSAPP_GATEWAY_TOKEN in .env}
   WHATSAPP_GATEWAY_TIMEOUT_SECONDS: ${WHATSAPP_GATEWAY_TIMEOUT_SECONDS:-20}
-  WHATSAPP_GATEWAY_CONNECTOR_ID: ${WHATSAPP_GATEWAY_CONNECTOR_ID:?Set WHATSAPP_GATEWAY_CONNECTOR_ID in .env}
-  WHATSAPP_GATEWAY_SESSION_ID: ${WHATSAPP_SESSION_ID:-customer001}
   CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:?Set CONFIG_ENCRYPTION_KEY in .env}
   CONFIG_ENCRYPTION_KEY_VERSION: ${CONFIG_ENCRYPTION_KEY_VERSION:-v1}
   CHROMA_URL: ${CHROMA_URL:-http://chroma:8000}
@@ -194,22 +192,19 @@ services:
     init: true
     environment:
       BACKEND_API_URL: http://backend:8000/api/v1
-      BACKEND_CONNECTOR_ID: ${WHATSAPP_GATEWAY_CONNECTOR_ID:?Set WHATSAPP_GATEWAY_CONNECTOR_ID in .env}
       BACKEND_API_TOKEN: ${WHATSAPP_GATEWAY_TOKEN:?Set WHATSAPP_GATEWAY_TOKEN in .env}
       CONNECTOR_API_TOKEN: ${WHATSAPP_GATEWAY_TOKEN:?Set WHATSAPP_GATEWAY_TOKEN in .env}
       PORT: 3001
       HOST: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       WHATSAPP_SESSION_ID: ${WHATSAPP_SESSION_ID:-customer001}
-      WHATSAPP_AUTO_CONNECT: ${WHATSAPP_AUTO_CONNECT:-true}
+      WHATSAPP_AUTO_CONNECT: ${WHATSAPP_AUTO_CONNECT:-false}
       WHATSAPP_SESSIONS_PATH: /workspace/service/whatsapp-connector/sessions
       WHATSAPP_ACCEPT_GROUP_MESSAGES: ${WHATSAPP_ACCEPT_GROUP_MESSAGES:-false}
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_HEADLESS: "true"
       PUPPETEER_NO_SANDBOX: "true"
       CORS_ORIGIN: ${WHATSAPP_CONNECTOR_CORS_ORIGIN:-http://localhost:5173}
-    ports:
-      - "${WHATSAPP_CONNECTOR_PORT:-3001}:3001"
     volumes:
       - whatsapp_sessions:/workspace/service/whatsapp-connector/sessions
     shm_size: 1gb
@@ -226,7 +221,6 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api/v1
-        VITE_WHATSAPP_GATEWAY_BASE_URL: ""
     image: ai-sales-agent-frontend:${IMAGE_TAG:-local}
     init: true
     read_only: true
@@ -243,14 +237,12 @@ services:
     init: true
     ports:
       - "${HTTP_PORT:-80}:80"
-    environment:
-      WHATSAPP_GATEWAY_TOKEN: ${WHATSAPP_GATEWAY_TOKEN:?Set WHATSAPP_GATEWAY_TOKEN in .env}
     command:
       - /bin/sh
       - -c
       - >-
-        envsubst '$$WHATSAPP_GATEWAY_TOKEN' < /etc/nginx/nginx.conf.template
-        > /tmp/nginx.conf && exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+        cp /etc/nginx/nginx.conf.template /tmp/nginx.conf &&
+        exec nginx -c /tmp/nginx.conf -g 'daemon off;'
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf.template:ro
     depends_on:

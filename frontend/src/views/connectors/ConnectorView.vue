@@ -109,12 +109,7 @@ async function openConfig(row: Connector): Promise<void> {
     const status = await getWhatsAppConfigStatus(row.id);
     configuredKeys.value = status.configured_keys;
     webhookUrl.value = status.webhook_url;
-    const savedAdapter = localStorage.getItem(`whatsapp-adapter:${row.id}`);
-    whatsappForm.adapter = savedAdapter === "webjs_gateway"
-      ? savedAdapter
-      : status.adapter === "webjs_gateway"
-        ? status.adapter
-        : "cloud_api";
+    whatsappForm.adapter = status.adapter === "webjs_gateway" ? "webjs_gateway" : "cloud_api";
   } catch (requestError) {
     ElMessage.error(getApiErrorMessage(requestError));
   } finally {
@@ -124,9 +119,6 @@ async function openConfig(row: Connector): Promise<void> {
 
 function selectWhatsAppAdapter(value: string): void {
   whatsappForm.adapter = value;
-  if (selected.value) {
-    localStorage.setItem(`whatsapp-adapter:${selected.value.id}`, value);
-  }
 }
 
 function isConfigured(key: string): boolean {
@@ -291,14 +283,14 @@ onMounted(load);
         class="connector-config-form"
       >
         <el-form-item label="连接方式" required>
-          <el-select
+          <el-radio-group
             :model-value="whatsappForm.adapter"
             class="full-width"
             @update:model-value="selectWhatsAppAdapter"
           >
-            <el-option label="WhatsApp Cloud API" value="cloud_api" />
-            <el-option label="WhatsApp Web" value="webjs_gateway" />
-          </el-select>
+            <el-radio-button value="cloud_api">WhatsApp Cloud API</el-radio-button>
+            <el-radio-button value="webjs_gateway">WhatsApp Web 扫码登录</el-radio-button>
+          </el-radio-group>
         </el-form-item>
         <template v-if="!isWhatsAppWeb">
           <el-form-item label="商务号码 ID" required>
@@ -337,7 +329,9 @@ onMounted(load);
         </template>
         <WhatsAppWebConnectPanel
           v-else
-          :initial-session-id="selected?.session_id || 'customer001'"
+          :connector-id="selected!.id"
+          :initial-session-id="selected!.session_id || selected!.id"
+          @connected="load"
         />
       </el-form>
 

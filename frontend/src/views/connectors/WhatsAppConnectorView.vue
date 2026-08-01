@@ -22,7 +22,7 @@ const router = useRouter();
       <el-result
         icon="info"
         title="使用 Provider Adapter 配置连接"
-        sub-title="二维码会话流程已停用。请在 Connector 管理中配置 WhatsApp Cloud API 凭据并测试连接。"
+        sub-title="请在 Connector 管理中选择 WhatsApp Cloud API，或使用 WhatsApp Web 扫码登录。"
       >
         <template #extra>
           <el-button type="primary" :icon="Link" @click="router.push('/connectors')">
@@ -31,7 +31,7 @@ const router = useRouter();
         </template>
       </el-result>
       <el-alert
-        title="Webhook URL 按 Connector 独立生成；Access Token、Verify Token 和 App Secret 均加密保存。"
+        title="Cloud API 凭据加密保存；WhatsApp Web 会话通过 FastAPI 安全代理并使用 LocalAuth 持久化。"
         type="success"
         show-icon
         :closable="false"

@@ -12,18 +12,19 @@ import { ElMessage } from "element-plus";
 
 import {
   connectWhatsAppWeb,
+  disconnectWhatsAppWeb,
   getWhatsAppWebErrorMessage,
   getWhatsAppWebQr,
   getWhatsAppWebStatus,
+  reconnectWhatsAppWeb,
+  saveWhatsAppWebConfig,
   type WhatsAppWebStatus,
 } from "@/api/whatsapp-web";
 
-const props = withDefaults(defineProps<{ initialSessionId?: string }>(), {
-  initialSessionId: "customer001",
-});
+const props = defineProps<{ connectorId: string; initialSessionId: string }>();
+const emit = defineEmits<{ connected: [] }>();
 
-const STORAGE_KEY = "ai-sales:whatsapp-web:session-id";
-const sessionId = ref(localStorage.getItem(STORAGE_KEY) || props.initialSessionId);
+const sessionId = ref(props.initialSessionId);
 const status = ref<WhatsAppWebStatus>("DISCONNECTED");
 const phone = ref<string | null>(null);
 const qrDataUrl = ref<string | null>(null);
@@ -50,25 +51,29 @@ const validSessionId = computed(() => /^[A-Za-z0-9_-]{1,64}$/.test(sessionId.val
 function applyStatus(next: {
   status: WhatsAppWebStatus;
   phone: string | null;
-  lastError: string | null;
+  last_error: string | null;
 }): void {
+  const wasConnected = status.value === "CONNECTED";
   status.value = next.status;
   phone.value = next.phone;
-  errorMessage.value = next.lastError || "";
-  if (next.status === "CONNECTED") qrDataUrl.value = null;
+  errorMessage.value = next.last_error || "";
+  if (next.status === "CONNECTED") {
+    qrDataUrl.value = null;
+    if (!wasConnected) emit("connected");
+  }
 }
 
 async function refreshQr(): Promise<void> {
   if (status.value !== "WAITING_QR") return;
-  const result = await getWhatsAppWebQr(sessionId.value);
-  qrDataUrl.value = result.dataUrl;
+  const result = await getWhatsAppWebQr(props.connectorId);
+  qrDataUrl.value = result.data_url;
 }
 
 async function refreshStatus(options: { silent?: boolean } = {}): Promise<void> {
   if (!validSessionId.value || refreshing.value) return;
   refreshing.value = true;
   try {
-    const result = await getWhatsAppWebStatus(sessionId.value);
+    const result = await getWhatsAppWebStatus(props.connectorId);
     applyStatus(result);
     await refreshQr();
   } catch (error) {
@@ -91,11 +96,41 @@ async function connect(): Promise<void> {
   connecting.value = true;
   errorMessage.value = "";
   qrDataUrl.value = null;
-  localStorage.setItem(STORAGE_KEY, sessionId.value);
   try {
-    applyStatus(await connectWhatsAppWeb(sessionId.value));
+    await saveWhatsAppWebConfig(props.connectorId, sessionId.value);
+    applyStatus(await connectWhatsAppWeb(props.connectorId));
     startPolling();
     await refreshStatus();
+  } catch (error) {
+    errorMessage.value = getWhatsAppWebErrorMessage(error);
+    ElMessage.error(errorMessage.value);
+  } finally {
+    connecting.value = false;
+  }
+}
+
+async function reconnect(): Promise<void> {
+  connecting.value = true;
+  errorMessage.value = "";
+  qrDataUrl.value = null;
+  try {
+    applyStatus(await reconnectWhatsAppWeb(props.connectorId));
+    startPolling();
+    await refreshStatus();
+  } catch (error) {
+    errorMessage.value = getWhatsAppWebErrorMessage(error);
+    ElMessage.error(errorMessage.value);
+  } finally {
+    connecting.value = false;
+  }
+}
+
+async function disconnect(): Promise<void> {
+  connecting.value = true;
+  try {
+    applyStatus(await disconnectWhatsAppWeb(props.connectorId));
+    qrDataUrl.value = null;
+    ElMessage.success("WhatsApp Web 会话已断开");
   } catch (error) {
     errorMessage.value = getWhatsAppWebErrorMessage(error);
     ElMessage.error(errorMessage.value);
@@ -146,7 +181,7 @@ onBeforeUnmount(() => {
         :loading="connecting"
         @click="connect"
       >
-        {{ status === "CONNECTED" ? "重新连接" : "连接" }}
+        保存并连接
       </el-button>
     </div>
 
@@ -188,9 +223,17 @@ onBeforeUnmount(() => {
 
     <div class="web-connect-panel__footer">
       <span>状态每 2.5 秒自动更新</span>
-      <el-button text type="primary" :icon="RefreshRight" @click="refreshStatus()">
-        立即刷新
-      </el-button>
+      <div>
+        <el-button text type="primary" :icon="RefreshRight" @click="refreshStatus()">
+          立即刷新
+        </el-button>
+        <el-button text type="warning" :disabled="connecting" @click="reconnect">
+          重新连接
+        </el-button>
+        <el-button text type="danger" :disabled="connecting" @click="disconnect">
+          断开连接
+        </el-button>
+      </div>
     </div>
   </section>
 </template>

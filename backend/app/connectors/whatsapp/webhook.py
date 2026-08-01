@@ -12,11 +12,14 @@ from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     WhatsAppConfigStatusResponse,
     WhatsAppGatewayInboundRequest,
+    WhatsAppGatewaySessionStatusRequest,
     WhatsAppSendRequest,
     WhatsAppSendResponse,
     WhatsAppTestRequest,
     WhatsAppTestResponse,
     WhatsAppWebhookResponse,
+    WhatsAppWebSessionQrResponse,
+    WhatsAppWebSessionStatusResponse,
 )
 from app.connectors.whatsapp.service import WhatsAppService
 from app.core.config import get_settings
@@ -131,6 +134,32 @@ async def receive_whatsapp_gateway_message(
     )
 
 
+@gateway_router.post(
+    "/session-status",
+    response_model=WhatsAppWebSessionStatusResponse,
+)
+async def receive_whatsapp_gateway_session_status(
+    payload: WhatsAppGatewaySessionStatusRequest,
+    request: Request,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+) -> WhatsAppWebSessionStatusResponse:
+    settings = get_settings()
+    if not settings.whatsapp_gateway_token:
+        raise AppError(
+            503,
+            "WHATSAPP_GATEWAY_NOT_CONFIGURED",
+            "WHATSAPP_GATEWAY_TOKEN is not configured.",
+        )
+    supplied_token = request.headers.get("X-WhatsApp-Gateway-Token", "")
+    if not hmac.compare_digest(supplied_token, settings.whatsapp_gateway_token):
+        raise AppError(
+            403,
+            "WHATSAPP_GATEWAY_TOKEN_INVALID",
+            "WhatsApp gateway authentication failed.",
+        )
+    return await service.handle_gateway_session_status(payload)
+
+
 @send_router.post("/send", response_model=WhatsAppSendResponse)
 async def send_whatsapp_message(
     payload: WhatsAppSendRequest,
@@ -162,6 +191,81 @@ async def whatsapp_config_status(
         + f"/webhooks/whatsapp/{connector_id}"
     )
     return await service.config_status(principal, connector_id, webhook_url)
+
+
+@management_router.post(
+    "/{connector_id}/web-session/connect",
+    response_model=WhatsAppWebSessionStatusResponse,
+)
+async def connect_whatsapp_web_session(
+    connector_id: str,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> WhatsAppWebSessionStatusResponse:
+    return await service.connect_web_session(principal, connector_id)
+
+
+@management_router.get(
+    "/{connector_id}/web-session/status",
+    response_model=WhatsAppWebSessionStatusResponse,
+)
+async def whatsapp_web_session_status(
+    connector_id: str,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.read", "connector.manage")),
+    ],
+) -> WhatsAppWebSessionStatusResponse:
+    return await service.web_session_status(principal, connector_id)
+
+
+@management_router.get(
+    "/{connector_id}/web-session/qr",
+    response_model=WhatsAppWebSessionQrResponse,
+)
+async def whatsapp_web_session_qr(
+    connector_id: str,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> WhatsAppWebSessionQrResponse:
+    return await service.web_session_qr(principal, connector_id)
+
+
+@management_router.post(
+    "/{connector_id}/web-session/reconnect",
+    response_model=WhatsAppWebSessionStatusResponse,
+)
+async def reconnect_whatsapp_web_session(
+    connector_id: str,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> WhatsAppWebSessionStatusResponse:
+    return await service.reconnect_web_session(principal, connector_id)
+
+
+@management_router.delete(
+    "/{connector_id}/web-session",
+    response_model=WhatsAppWebSessionStatusResponse,
+)
+async def disconnect_whatsapp_web_session(
+    connector_id: str,
+    service: Annotated[WhatsAppService, Depends(get_whatsapp_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.manage", "connector.secret_manage")),
+    ],
+) -> WhatsAppWebSessionStatusResponse:
+    return await service.disconnect_web_session(principal, connector_id)
 
 
 @management_router.post("/test", response_model=WhatsAppTestResponse)

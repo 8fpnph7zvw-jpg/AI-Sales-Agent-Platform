@@ -16,13 +16,17 @@ from app.connectors.whatsapp.client import (
     WhatsAppConnector,
     required_config_keys,
 )
+from app.connectors.whatsapp.providers.webjs_gateway import WhatsAppWebJsGatewayAdapter
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     WhatsAppConfigStatusResponse,
     WhatsAppGatewayInboundRequest,
+    WhatsAppGatewaySessionStatusRequest,
     WhatsAppSendResponse,
     WhatsAppTestResponse,
     WhatsAppWebhookResponse,
+    WhatsAppWebSessionQrResponse,
+    WhatsAppWebSessionStatusResponse,
 )
 from app.core.config import Settings
 from app.core.encryption import ConfigCipher
@@ -37,6 +41,7 @@ from app.models.auth.tenant import Tenant
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
+from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
@@ -149,6 +154,81 @@ class WhatsAppService:
             checked_at=result.checked_at,
         )
 
+    async def connect_web_session(
+        self,
+        principal: Principal,
+        connector_id: str,
+    ) -> WhatsAppWebSessionStatusResponse:
+        runtime, whatsapp_session = await self._web_session_runtime(principal, connector_id)
+        adapter = self._webjs_adapter(runtime)
+        try:
+            snapshot = await adapter.connect_session()
+        except Exception as exc:
+            await self._mark_web_session_error(runtime.connector, whatsapp_session, exc)
+            raise
+        return await self._sync_web_session(runtime.connector, whatsapp_session, snapshot)
+
+    async def web_session_status(
+        self,
+        principal: Principal,
+        connector_id: str,
+    ) -> WhatsAppWebSessionStatusResponse:
+        runtime, whatsapp_session = await self._web_session_runtime(principal, connector_id)
+        adapter = self._webjs_adapter(runtime)
+        try:
+            snapshot = await adapter.session_status()
+        except Exception as exc:
+            await self._mark_web_session_error(runtime.connector, whatsapp_session, exc)
+            raise
+        return await self._sync_web_session(runtime.connector, whatsapp_session, snapshot)
+
+    async def web_session_qr(
+        self,
+        principal: Principal,
+        connector_id: str,
+    ) -> WhatsAppWebSessionQrResponse:
+        runtime, whatsapp_session = await self._web_session_runtime(principal, connector_id)
+        adapter = self._webjs_adapter(runtime)
+        try:
+            snapshot = await adapter.session_qr()
+        except Exception as exc:
+            await self._mark_web_session_error(runtime.connector, whatsapp_session, exc)
+            raise
+        status = await self._sync_web_session(runtime.connector, whatsapp_session, snapshot)
+        return WhatsAppWebSessionQrResponse(
+            **status.model_dump(),
+            qr=str(snapshot.get("qr") or "") or None,
+            data_url=str(snapshot.get("dataUrl") or "") or None,
+        )
+
+    async def reconnect_web_session(
+        self,
+        principal: Principal,
+        connector_id: str,
+    ) -> WhatsAppWebSessionStatusResponse:
+        runtime, whatsapp_session = await self._web_session_runtime(principal, connector_id)
+        adapter = self._webjs_adapter(runtime)
+        try:
+            snapshot = await adapter.reconnect_session()
+        except Exception as exc:
+            await self._mark_web_session_error(runtime.connector, whatsapp_session, exc)
+            raise
+        return await self._sync_web_session(runtime.connector, whatsapp_session, snapshot)
+
+    async def disconnect_web_session(
+        self,
+        principal: Principal,
+        connector_id: str,
+    ) -> WhatsAppWebSessionStatusResponse:
+        runtime, whatsapp_session = await self._web_session_runtime(principal, connector_id)
+        adapter = self._webjs_adapter(runtime)
+        try:
+            snapshot = await adapter.disconnect_session()
+        except Exception as exc:
+            await self._mark_web_session_error(runtime.connector, whatsapp_session, exc)
+            raise
+        return await self._sync_web_session(runtime.connector, whatsapp_session, snapshot)
+
     async def verify_webhook(
         self,
         connector_id: str,
@@ -195,24 +275,21 @@ class WhatsAppService:
         raw_body: bytes,
         headers: dict[str, str],
     ) -> WhatsAppWebhookResponse:
-        connector_id = payload.connector_id or self.settings.whatsapp_gateway_connector_id
-        if not connector_id:
-            raise ServiceConfigurationError(
-                "connector_id or WHATSAPP_GATEWAY_CONNECTOR_ID is required."
-            )
-        session_id = payload.session_id or self.settings.whatsapp_gateway_session_id
-        context = await self.repository.get_connector_context_by_public_id(
-            connector_id,
-            for_update=True,
-        )
+        context = await self.repository.get_connector_by_session(payload.session_id)
         if context is None:
-            raise ResourceNotFoundError("Active WhatsApp connector")
+            raise ResourceNotFoundError("Active WhatsApp Web session")
         connector, tenant = context
-        runtime = self._gateway_runtime(
-            connector,
-            tenant,
-            session_id=session_id,
-        )
+        runtime = await self._runtime(connector, tenant)
+        if runtime.adapter.adapter_key != "webjs_gateway":
+            raise ConflictError(
+                "WHATSAPP_WEB_SESSION_INACTIVE",
+                "The session is not assigned to the active WhatsApp Web adapter.",
+            )
+        if str(runtime.config.get("session_id") or "") != payload.session_id:
+            raise ConflictError(
+                "WHATSAPP_WEB_SESSION_MISMATCH",
+                "The inbound session does not match the connector configuration.",
+            )
         envelopes = await runtime.adapter.normalize_inbound(
             payload.model_dump(),
             headers,
@@ -226,6 +303,179 @@ class WhatsAppService:
             else:
                 response.processed += 1
         return response
+
+    async def handle_gateway_session_status(
+        self,
+        payload: WhatsAppGatewaySessionStatusRequest,
+    ) -> WhatsAppWebSessionStatusResponse:
+        context = await self.repository.get_connector_by_session(payload.session_id)
+        if context is None:
+            raise ResourceNotFoundError("Active WhatsApp Web session")
+        connector, tenant = context
+        runtime = await self._runtime(connector, tenant)
+        if runtime.adapter.adapter_key != "webjs_gateway":
+            raise ConflictError(
+                "WHATSAPP_WEB_SESSION_INACTIVE",
+                "The session is not assigned to the active WhatsApp Web adapter.",
+            )
+        whatsapp_session = await self.repository.get_whatsapp_session(
+            connector.tenant_id,
+            connector.id,
+            for_update=True,
+        )
+        if whatsapp_session is None:
+            raise ResourceNotFoundError("WhatsApp Web session")
+        return await self._sync_web_session(
+            connector,
+            whatsapp_session,
+            {
+                "status": payload.status,
+                "phone": payload.phone,
+                "lastError": payload.last_error,
+                "dataUrl": payload.data_url,
+            },
+        )
+
+    async def _web_session_runtime(
+        self,
+        principal: Principal,
+        connector_id: str,
+    ) -> tuple[WhatsAppRuntime, WhatsAppSession]:
+        context = await self.repository.get_connector_context(
+            principal.tenant_id,
+            connector_id,
+            for_update=True,
+        )
+        if context is None:
+            raise ResourceNotFoundError("WhatsApp connector")
+        connector, tenant = context
+        runtime = await self._runtime(connector, tenant)
+        if runtime.adapter.adapter_key != "webjs_gateway":
+            raise ConflictError(
+                "WHATSAPP_WEB_MODE_REQUIRED",
+                "Save the connector with adapter=webjs_gateway before managing its session.",
+            )
+        session_id = str(runtime.config.get("session_id") or "").strip()
+        if not session_id:
+            raise ServiceConfigurationError("session_id is required for WhatsApp Web.")
+        claim = await self.repository.get_session_claim(
+            session_name=session_id,
+            session_id=session_id,
+            exclude_connector_id=connector.id,
+        )
+        if claim is not None:
+            raise ConflictError(
+                "WHATSAPP_SESSION_ALREADY_ASSIGNED",
+                "The WhatsApp Web session is already assigned to another connector.",
+            )
+        whatsapp_session = await self.repository.get_whatsapp_session(
+            principal.tenant_id,
+            connector.id,
+            for_update=True,
+        )
+        if whatsapp_session is None:
+            whatsapp_session = WhatsAppSession(
+                tenant_id=principal.tenant_id,
+                connector_id=connector.id,
+                session_id=session_id,
+                session_name=session_id,
+                status="created",
+            )
+            self.repository.add_whatsapp_session(whatsapp_session)
+        else:
+            whatsapp_session.session_id = session_id
+            whatsapp_session.session_name = session_id
+        connector.session_id = session_id
+        # Commit the connector/session binding before starting Node. QR/ready events
+        # can arrive immediately and are delivered back on a separate transaction.
+        await self.session.commit()
+        return runtime, whatsapp_session
+
+    @staticmethod
+    def _webjs_adapter(runtime: WhatsAppRuntime) -> WhatsAppWebJsGatewayAdapter:
+        adapter = runtime.adapter.adapter
+        if not isinstance(adapter, WhatsAppWebJsGatewayAdapter):
+            raise ConflictError(
+                "WHATSAPP_WEB_MODE_REQUIRED",
+                "The connector is not configured for WhatsApp Web.",
+            )
+        return adapter
+
+    async def _sync_web_session(
+        self,
+        connector: Connector,
+        whatsapp_session: WhatsAppSession,
+        snapshot: dict[str, Any],
+    ) -> WhatsAppWebSessionStatusResponse:
+        status = str(snapshot.get("status") or "DISCONNECTED").upper()
+        phone = str(snapshot.get("phone") or "").strip() or None
+        last_error = str(snapshot.get("lastError") or "").strip() or None
+        status_map = {
+            "CONNECTING": "starting",
+            "WAITING_QR": "waiting_qr",
+            "CONNECTED": "connected",
+            "DISCONNECTED": "disconnected",
+        }
+        whatsapp_session.status = status_map.get(status, "error")
+        whatsapp_session.phone = phone
+        whatsapp_session.last_error = last_error
+        data_url = str(snapshot.get("dataUrl") or "").strip() or None
+        if data_url:
+            whatsapp_session.qr_code = data_url
+
+        now = datetime.now(UTC)
+        if status == "CONNECTED":
+            whatsapp_session.qr_code = None
+            whatsapp_session.last_connected_at = now
+            connector.status = "active"
+            connector.health_status = "healthy"
+            connector.health_detail = {
+                "message": "WhatsApp Web session is connected.",
+                "adapter": "webjs_gateway",
+            }
+            connector.phone = phone
+            connector.last_connected_at = now
+            connector.last_disconnect_reason = None
+            connector.last_health_check_at = now
+        elif status in {"CONNECTING", "WAITING_QR"}:
+            connector.status = "draft"
+            connector.health_status = None
+            connector.health_detail = {
+                "message": f"WhatsApp Web session is {status.lower()}.",
+                "adapter": "webjs_gateway",
+            }
+        else:
+            connector.status = "draft" if not last_error else "error"
+            connector.health_status = "unhealthy" if last_error else None
+            connector.last_disconnect_reason = last_error
+            connector.health_detail = {
+                "message": last_error or "WhatsApp Web session is disconnected.",
+                "adapter": "webjs_gateway",
+            }
+        await self.session.commit()
+        return WhatsAppWebSessionStatusResponse(
+            connector_id=connector.public_id,
+            session_id=whatsapp_session.session_id or whatsapp_session.session_name,
+            status=status,
+            phone=phone,
+            last_error=last_error,
+        )
+
+    async def _mark_web_session_error(
+        self,
+        connector: Connector,
+        whatsapp_session: WhatsAppSession,
+        exc: Exception,
+    ) -> None:
+        message = str(exc)[:1000]
+        whatsapp_session.status = "error"
+        whatsapp_session.last_error = message
+        connector.status = "error"
+        connector.health_status = "unhealthy"
+        connector.health_detail = {"message": message, "adapter": "webjs_gateway"}
+        connector.last_disconnect_reason = message
+        connector.last_health_check_at = datetime.now(UTC)
+        await self.session.commit()
 
     async def send_message(
         self,

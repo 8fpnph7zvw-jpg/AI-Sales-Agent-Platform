@@ -45,6 +45,19 @@ class WhatsAppConfigStatusResponse(BaseModel):
     webhook_url: str
 
 
+class WhatsAppWebSessionStatusResponse(BaseModel):
+    connector_id: str
+    session_id: str
+    status: str
+    phone: str | None = None
+    last_error: str | None = None
+
+
+class WhatsAppWebSessionQrResponse(WhatsAppWebSessionStatusResponse):
+    qr: str | None = None
+    data_url: str | None = None
+
+
 class WhatsAppWebhookResponse(BaseModel):
     status: str = "accepted"
     processed: int = 0
@@ -63,5 +76,12 @@ class WhatsAppGatewayInboundRequest(BaseModel):
     channel: Literal["whatsapp"] = "whatsapp"
     timestamp: int | float | None = Field(default=None, gt=0)
     message_id: str | None = Field(default=None, min_length=1, max_length=255)
-    session_id: str | None = Field(default=None, min_length=1, max_length=64)
-    connector_id: str | None = Field(default=None, min_length=26, max_length=26)
+    session_id: str = Field(min_length=1, max_length=64)
+
+
+class WhatsAppGatewaySessionStatusRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    status: Literal["CONNECTING", "WAITING_QR", "CONNECTED", "DISCONNECTED"]
+    phone: str | None = Field(default=None, max_length=32)
+    last_error: str | None = Field(default=None, max_length=1000)
+    data_url: str | None = None

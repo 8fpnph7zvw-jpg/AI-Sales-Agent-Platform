@@ -7,13 +7,14 @@ FastAPI business services
   -> WhatsAppConnector
     -> WhatsAppProviderAdapter
       -> WhatsApp Cloud API (built-in)
+      -> whatsapp-web.js gateway (built-in)
       -> future Baileys adapter
       -> future provider adapters
 ```
 
 ## 当前 Provider
 
-内置 `cloud_api` adapter，使用 Meta WhatsApp Cloud API。Graph API 地址和版本由服务端环境变量管理：
+内置 `cloud_api` 和 `webjs_gateway` 两个 adapter。Cloud API 的 Graph API 地址和版本由服务端环境变量管理：
 
 ```dotenv
 WHATSAPP_GRAPH_API_BASE_URL=https://graph.facebook.com
@@ -29,7 +30,11 @@ WHATSAPP_WEBHOOK_MAX_BYTES=1048576
 - `access_token`
 - `verify_token`
 - `app_secret`
-- `adapter`（当前为 `cloud_api`）
+- `adapter`（`cloud_api` 或 `webjs_gateway`）
+
+WhatsApp Web 模式仅保存 `adapter=webjs_gateway` 和 `session_id`。Gateway URL 与
+共享密钥只存在于服务端环境变量中；浏览器通过 FastAPI 的
+`/connectors/whatsapp/{id}/web-session/*` 接口管理二维码会话，不直接访问 Node gateway。
 
 ## Webhook
 

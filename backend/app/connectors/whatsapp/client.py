@@ -77,6 +77,13 @@ class WhatsAppConnector(BaseConnector):
                 else self.settings.whatsapp_timeout_seconds
             ),
         }
+        if adapter_key == "webjs_gateway":
+            provider_config.update(
+                {
+                    "gateway_url": self.settings.whatsapp_gateway_url,
+                    "gateway_token": self.settings.whatsapp_gateway_token,
+                }
+            )
         self.adapter_key = adapter_key
         self.adapter = adapter_type(provider_config)
 

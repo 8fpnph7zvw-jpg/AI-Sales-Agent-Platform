@@ -17,13 +17,6 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       port: 5173,
       proxy: {
-        "/api/whatsapp": {
-          target: env.VITE_WHATSAPP_GATEWAY_PROXY_TARGET || "http://localhost:3001",
-          changeOrigin: true,
-          headers: {
-            "X-WhatsApp-Gateway-Token": env.WHATSAPP_GATEWAY_TOKEN || "",
-          },
-        },
         "/api": {
           target: env.VITE_DEV_PROXY_TARGET || "http://localhost:8000",
           changeOrigin: true,

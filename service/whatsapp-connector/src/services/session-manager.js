@@ -81,6 +81,24 @@ class SessionManager {
     return this.snapshot(sessionId);
   }
 
+  async reconnect(sessionId = this.config.defaultSessionId) {
+    this.validateSessionId(sessionId);
+    const current = this.sessions.get(sessionId);
+    if (current) {
+      await this.#destroyEntry(current);
+      this.sessions.delete(sessionId);
+    }
+    return this.connect(sessionId);
+  }
+
+  async disconnect(sessionId = this.config.defaultSessionId) {
+    this.validateSessionId(sessionId);
+    const current = this.sessions.get(sessionId);
+    if (current) await this.#destroyEntry(current);
+    this.sessions.delete(sessionId);
+    return this.snapshot(sessionId);
+  }
+
   async send({ sessionId = this.config.defaultSessionId, phone, message }) {
     this.validateSessionId(sessionId);
     const entry = this.sessions.get(sessionId);
@@ -120,7 +138,10 @@ class SessionManager {
       entry.qrDataUrl = null;
       QRCode.toDataURL(qr)
         .then((dataUrl) => {
-          if (entry.qr === qr) entry.qrDataUrl = dataUrl;
+          if (entry.qr === qr) {
+            entry.qrDataUrl = dataUrl;
+            this.#forwardStatus(entry);
+          }
         })
         .catch((error) => {
           this.logger.warn('whatsapp_qr_render_failed', { sessionId, error: error.message });
@@ -139,17 +160,20 @@ class SessionManager {
       entry.lastError = null;
       entry.phone = client.info?.wid?.user || null;
       this.logger.info('whatsapp_connected', { sessionId, phone: entry.phone });
+      this.#forwardStatus(entry);
     });
     client.on('auth_failure', (message) => {
       entry.status = 'DISCONNECTED';
       entry.lastError = String(message);
       this.logger.error('whatsapp_authentication_failed', { sessionId, error: entry.lastError });
+      this.#forwardStatus(entry);
     });
     client.on('disconnected', (reason) => {
       entry.status = 'DISCONNECTED';
       entry.lastError = String(reason);
       entry.phone = null;
       this.logger.warn('whatsapp_disconnected', { sessionId, reason: entry.lastError });
+      this.#forwardStatus(entry);
     });
     client.on('message', (message) => {
       this.#handleInbound(entry, message).catch((error) => {
@@ -196,6 +220,21 @@ class SessionManager {
         error: error.message,
       });
     }
+  }
+
+  #forwardStatus(entry) {
+    this.backendService.forwardStatus({
+      session_id: entry.sessionId,
+      status: entry.status,
+      phone: entry.phone,
+      last_error: entry.lastError,
+      data_url: entry.qrDataUrl,
+    }).catch((error) => {
+      this.logger.warn('whatsapp_status_forward_failed', {
+        sessionId: entry.sessionId,
+        error: error.message,
+      });
+    });
   }
 }
 

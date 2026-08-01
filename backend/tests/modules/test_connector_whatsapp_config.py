@@ -109,3 +109,47 @@ async def test_whatsapp_cloud_config_is_stored_and_phone_becomes_external_id() -
     assert connector.status == "draft"
     assert session.committed is True
     assert "123456789" not in response.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_web_config_saves_adapter_and_session_id() -> None:
+    connector = SimpleNamespace(
+        id=10,
+        public_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        provider="whatsapp",
+        external_account_id="demo-template",
+        session_id=None,
+        status="disabled",
+        health_status=None,
+        health_detail=None,
+        last_health_check_at=None,
+    )
+    repository = FakeRepository(connector)
+    session = FakeSession()
+    service = ConnectorService(session, repository, FakeCipher())
+    principal = Principal(
+        user_id=20,
+        user_public_id="user-public-id",
+        tenant_id=1,
+        tenant_public_id="tenant-public-id",
+        permissions=frozenset({"connector.secret_manage"}),
+    )
+    payload = ConnectorConfigRequest.model_validate(
+        {
+            "connector_id": connector.public_id,
+            "values": [
+                {"key": "adapter", "value": "webjs_gateway", "is_secret": False},
+                {"key": "session_id", "value": "sales-web-01", "is_secret": False},
+            ],
+        }
+    )
+
+    await service.configure(principal, payload)
+
+    assert {config.config_key for config in repository.configs} == {
+        "adapter",
+        "session_id",
+    }
+    assert connector.session_id == "sales-web-01"
+    assert connector.external_account_id == "sales-web-01"
+    assert connector.status == "draft"

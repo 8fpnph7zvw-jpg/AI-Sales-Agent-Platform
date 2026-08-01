@@ -23,8 +23,8 @@ from app.schemas.protocol import (
     UnifiedMessageEnvelope,
 )
 
-WEBJS_GATEWAY_REQUIRED_CONFIG_KEYS = ("gateway_url", "gateway_token", "session_id")
-WEBJS_GATEWAY_SECRET_CONFIG_KEYS = frozenset({"gateway_token"})
+WEBJS_GATEWAY_REQUIRED_CONFIG_KEYS = ("session_id",)
+WEBJS_GATEWAY_SECRET_CONFIG_KEYS = frozenset()
 
 
 @whatsapp_provider_registry.register("webjs_gateway")
@@ -42,6 +42,11 @@ class WhatsAppWebJsGatewayAdapter(WhatsAppProviderAdapter):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
         errors = self.validate_config(config)
+        errors.extend(
+            f"{key} is required"
+            for key in ("gateway_url", "gateway_token")
+            if not str(config.get(key) or "").strip()
+        )
         if errors:
             raise ServiceConfigurationError("; ".join(errors))
         self.gateway_url = str(config["gateway_url"]).rstrip("/")
@@ -61,6 +66,41 @@ class WhatsAppWebJsGatewayAdapter(WhatsAppProviderAdapter):
             status="healthy" if status == "CONNECTED" else "unhealthy",
             message=f"whatsapp-web.js gateway session is {status}.",
             latency_ms=int((perf_counter() - started) * 1000),
+        )
+
+    async def connect_session(self) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/whatsapp/connect",
+            json={"sessionId": self.session_id},
+        )
+
+    async def session_status(self) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/whatsapp/status",
+            params={"sessionId": self.session_id},
+        )
+
+    async def session_qr(self) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/api/whatsapp/qr",
+            params={"sessionId": self.session_id},
+        )
+
+    async def reconnect_session(self) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/whatsapp/reconnect",
+            json={"sessionId": self.session_id},
+        )
+
+    async def disconnect_session(self) -> dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            "/api/whatsapp/session",
+            json={"sessionId": self.session_id},
         )
 
     async def normalize_inbound(

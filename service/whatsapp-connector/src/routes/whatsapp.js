@@ -11,7 +11,7 @@ function createWhatsAppRouter({ config, manager }) {
   const router = express.Router();
 
   router.use((request, response, next) => {
-    if (!config.connectorApiToken || request.method === 'GET') return next();
+    if (!config.connectorApiToken) return next();
     const supplied = request.get('X-WhatsApp-Gateway-Token') || '';
     if (!secureEqual(supplied, config.connectorApiToken)) {
       return response.status(401).json({ error: 'Invalid gateway token' });
@@ -43,6 +43,24 @@ function createWhatsAppRouter({ config, manager }) {
       const sessionId = request.query.sessionId || config.defaultSessionId;
       manager.validateSessionId(sessionId);
       return response.json(manager.qr(sessionId));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post('/reconnect', async (request, response, next) => {
+    try {
+      const sessionId = request.body?.sessionId || config.defaultSessionId;
+      return response.status(202).json(await manager.reconnect(sessionId));
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.delete('/session', async (request, response, next) => {
+    try {
+      const sessionId = request.body?.sessionId || config.defaultSessionId;
+      return response.json(await manager.disconnect(sessionId));
     } catch (error) {
       return next(error);
     }

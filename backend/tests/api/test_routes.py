@@ -18,6 +18,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/conversations", "post"),
     ("/api/v1/conversations/{conversation_id}/messages", "get"),
     ("/api/v1/conversations/message", "post"),
+    ("/api/v1/conversations/session-status", "post"),
     ("/api/v1/conversation/message", "post"),
     ("/api/v1/agent/chat", "post"),
     ("/api/v1/lead-score", "post"),
@@ -27,6 +28,11 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/connectors", "get"),
     ("/api/v1/connectors/config", "post"),
     ("/api/v1/connectors/whatsapp/{connector_id}/config-status", "get"),
+    ("/api/v1/connectors/whatsapp/{connector_id}/web-session/connect", "post"),
+    ("/api/v1/connectors/whatsapp/{connector_id}/web-session/status", "get"),
+    ("/api/v1/connectors/whatsapp/{connector_id}/web-session/qr", "get"),
+    ("/api/v1/connectors/whatsapp/{connector_id}/web-session/reconnect", "post"),
+    ("/api/v1/connectors/whatsapp/{connector_id}/web-session", "delete"),
     ("/api/v1/connectors/whatsapp/test", "post"),
     ("/api/v1/webhooks/whatsapp", "get"),
     ("/api/v1/webhooks/whatsapp/{connector_id}", "get"),
@@ -162,6 +168,21 @@ async def test_whatsapp_send_endpoint_requires_bearer_token() -> None:
 
 
 @pytest.mark.asyncio
+async def test_whatsapp_web_session_endpoint_requires_bearer_token() -> None:
+    app = create_app()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/v1/connectors/whatsapp/01ARZ3NDEKTSV4RRFFQ69G5FAV/web-session/connect"
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTHENTICATION_FAILED"
+
+
+@pytest.mark.asyncio
 async def test_whatsapp_gateway_endpoint_rejects_invalid_shared_token(monkeypatch) -> None:
     monkeypatch.setenv("WHATSAPP_GATEWAY_TOKEN", "gateway-secret")
     get_settings.cache_clear()
@@ -181,7 +202,34 @@ async def test_whatsapp_gateway_endpoint_rejects_invalid_shared_token(monkeypatc
                     "timestamp": 1785376800,
                     "message_id": "webjs-message-1",
                     "session_id": "customer001",
-                    "connector_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                },
+            )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "WHATSAPP_GATEWAY_TOKEN_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_gateway_status_endpoint_rejects_invalid_shared_token(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("WHATSAPP_GATEWAY_TOKEN", "gateway-secret")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/conversations/session-status",
+                headers={"X-WhatsApp-Gateway-Token": "wrong"},
+                json={
+                    "session_id": "sales-web-01",
+                    "status": "CONNECTED",
+                    "phone": "15551234567",
                 },
             )
     finally:

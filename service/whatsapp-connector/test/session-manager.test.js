@@ -26,6 +26,7 @@ class FakeClient extends EventEmitter {
 function fixture() {
   const client = new FakeClient();
   const forwarded = [];
+  const statuses = [];
   const manager = new SessionManager(
     {
       defaultSessionId: 'customer001',
@@ -35,18 +36,22 @@ function fixture() {
       async forwardInbound(payload) {
         forwarded.push(payload);
       },
+      async forwardStatus(payload) {
+        statuses.push(payload);
+      },
     },
     { info() {}, warn() {}, error() {} },
     () => client,
   );
-  return { client, forwarded, manager };
+  return { client, forwarded, manager, statuses };
 }
 
 test('connect tracks LocalAuth lifecycle and sends messages', async () => {
-  const { client, manager } = fixture();
+  const { client, manager, statuses } = fixture();
   assert.equal((await manager.connect()).status, 'CONNECTING');
 
   client.emit('ready');
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(manager.snapshot('customer001'), {
     sessionId: 'customer001',
     status: 'CONNECTED',
@@ -63,6 +68,15 @@ test('connect tracks LocalAuth lifecycle and sends messages', async () => {
     chatId: '15550002222@c.us',
     message: 'AI reply',
   });
+  assert.deepEqual(statuses, [
+    {
+      session_id: 'customer001',
+      status: 'CONNECTED',
+      phone: '15550001111',
+      last_error: null,
+      data_url: null,
+    },
+  ]);
 });
 
 test('inbound customer message is forwarded with channel metadata', async () => {
@@ -90,4 +104,29 @@ test('inbound customer message is forwarded with channel metadata', async () => 
       session_id: 'customer001',
     },
   ]);
+});
+
+test('reconnect replaces the runtime client and disconnect removes it', async () => {
+  const clients = [];
+  const manager = new SessionManager(
+    { defaultSessionId: 'customer001', acceptGroupMessages: false },
+    { async forwardInbound() {}, async forwardStatus() {} },
+    { info() {}, warn() {}, error() {} },
+    () => {
+      const client = new FakeClient();
+      clients.push(client);
+      return client;
+    },
+  );
+
+  await manager.connect('customer001');
+  clients[0].emit('ready');
+  assert.equal(manager.snapshot('customer001').status, 'CONNECTED');
+
+  assert.equal((await manager.reconnect('customer001')).status, 'CONNECTING');
+  assert.equal(clients[0].destroyed, true);
+  assert.equal(clients.length, 2);
+
+  assert.equal((await manager.disconnect('customer001')).status, 'DISCONNECTED');
+  assert.equal(clients[1].destroyed, true);
 });

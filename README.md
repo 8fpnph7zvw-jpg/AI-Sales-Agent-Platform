@@ -27,5 +27,5 @@ Redis、Dify Agent 集成和基于 Chroma 的 RAG 知识库。
 ## WhatsApp Business
 
 WhatsApp 保留统一 Connector 管理入口，FastAPI 通过 provider-neutral adapter
-工作。当前内置 WhatsApp Cloud API adapter，后续可以在不修改 AI Agent 核心
-业务的前提下增加其他 provider。
+工作。当前同时支持 Meta WhatsApp Cloud API 和基于 `whatsapp-web.js` LocalAuth
+的二维码登录模式，两种模式共用 AI Agent 消息处理链路。

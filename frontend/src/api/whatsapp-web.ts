@@ -1,4 +1,5 @@
-import axios from "axios";
+import { apiClient, getApiErrorMessage } from "./client";
+import { configureConnector } from "./connectors";
 
 export type WhatsAppWebStatus =
   | "WAITING_QR"
@@ -7,57 +8,74 @@ export type WhatsAppWebStatus =
   | "DISCONNECTED";
 
 export interface WhatsAppWebSessionStatus {
-  sessionId: string;
+  connector_id: string;
+  session_id: string;
   status: WhatsAppWebStatus;
   phone: string | null;
-  lastError: string | null;
+  last_error: string | null;
 }
 
 export interface WhatsAppWebQr extends WhatsAppWebSessionStatus {
   qr: string | null;
-  dataUrl: string | null;
+  data_url: string | null;
 }
 
-const gatewayClient = axios.create({
-  baseURL: import.meta.env.VITE_WHATSAPP_GATEWAY_BASE_URL || "",
-  timeout: 15_000,
-  headers: { "Content-Type": "application/json" },
-});
+export async function saveWhatsAppWebConfig(
+  connectorId: string,
+  sessionId: string,
+): Promise<void> {
+  await configureConnector({
+    connector_id: connectorId,
+    values: [
+      { key: "adapter", value: "webjs_gateway", value_type: "string", is_secret: false },
+      { key: "session_id", value: sessionId, value_type: "string", is_secret: false },
+    ],
+  });
+}
 
 export async function connectWhatsAppWeb(
-  sessionId: string,
+  connectorId: string,
 ): Promise<WhatsAppWebSessionStatus> {
-  const { data } = await gatewayClient.post<WhatsAppWebSessionStatus>(
-    "/api/whatsapp/connect",
-    { sessionId },
+  const { data } = await apiClient.post<WhatsAppWebSessionStatus>(
+    `/connectors/whatsapp/${connectorId}/web-session/connect`,
   );
   return data;
 }
 
 export async function getWhatsAppWebStatus(
-  sessionId: string,
+  connectorId: string,
 ): Promise<WhatsAppWebSessionStatus> {
-  const { data } = await gatewayClient.get<WhatsAppWebSessionStatus>(
-    "/api/whatsapp/status",
-    { params: { sessionId } },
+  const { data } = await apiClient.get<WhatsAppWebSessionStatus>(
+    `/connectors/whatsapp/${connectorId}/web-session/status`,
   );
   return data;
 }
 
-export async function getWhatsAppWebQr(sessionId: string): Promise<WhatsAppWebQr> {
-  const { data } = await gatewayClient.get<WhatsAppWebQr>("/api/whatsapp/qr", {
-    params: { sessionId },
-  });
+export async function getWhatsAppWebQr(connectorId: string): Promise<WhatsAppWebQr> {
+  const { data } = await apiClient.get<WhatsAppWebQr>(
+    `/connectors/whatsapp/${connectorId}/web-session/qr`,
+  );
+  return data;
+}
+
+export async function reconnectWhatsAppWeb(
+  connectorId: string,
+): Promise<WhatsAppWebSessionStatus> {
+  const { data } = await apiClient.post<WhatsAppWebSessionStatus>(
+    `/connectors/whatsapp/${connectorId}/web-session/reconnect`,
+  );
+  return data;
+}
+
+export async function disconnectWhatsAppWeb(
+  connectorId: string,
+): Promise<WhatsAppWebSessionStatus> {
+  const { data } = await apiClient.delete<WhatsAppWebSessionStatus>(
+    `/connectors/whatsapp/${connectorId}/web-session`,
+  );
   return data;
 }
 
 export function getWhatsAppWebErrorMessage(error: unknown): string {
-  if (!axios.isAxiosError(error)) {
-    return error instanceof Error ? error.message : "WhatsApp Web 服务暂时不可用";
-  }
-  const body = error.response?.data as { error?: string } | undefined;
-  if (body?.error) return body.error;
-  if (error.code === "ECONNABORTED") return "连接请求超时，请稍后重试";
-  if (!error.response) return "无法连接 WhatsApp Gateway，请确认服务已启动";
-  return `WhatsApp Gateway 请求失败（${error.response.status}）`;
+  return getApiErrorMessage(error);
 }

@@ -100,6 +100,9 @@ class ConnectorService:
             external_account_id = effective_values.get("phone_number_id")
             if str(effective_values.get("adapter") or "cloud_api") == "webjs_gateway":
                 external_account_id = effective_values.get("session_id")
+                connector.session_id = str(external_account_id).strip()
+            else:
+                connector.session_id = None
             connector.external_account_id = str(external_account_id).strip()
             connector.status = "draft"
             connector.health_status = None
