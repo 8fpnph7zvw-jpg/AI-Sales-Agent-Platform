@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.modules.conversation.repository import ConversationRepository
 from app.modules.conversation.schemas import (
     ConversationCreate,
+    ConversationDeleteResponse,
     ConversationListResponse,
     ConversationMessageCreate,
     ConversationMessageListResponse,
@@ -71,6 +72,27 @@ async def list_conversations(
         status=status_filter,
         search=search,
     )
+
+
+@management_router.delete(
+    "/{conversation_id}",
+    response_model=ConversationDeleteResponse,
+)
+async def delete_conversation(
+    conversation_id: str,
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+    principal: Annotated[
+        Principal,
+        Depends(
+            require_any_permission(
+                "conversation.read_own",
+                "conversation.read_team",
+                "conversation.read_all",
+            )
+        ),
+    ],
+) -> ConversationDeleteResponse:
+    return await service.delete(principal, conversation_id)
 
 
 @management_router.get(

@@ -341,7 +341,7 @@ test('send failure is logged only after every phone and LID target fails', async
 });
 
 test('inbound customer message is forwarded with channel metadata', async () => {
-  const { client, forwarded, manager } = fixture();
+  const { client, forwarded, logs, manager } = fixture();
   await manager.connect();
   client.emit('message', {
     fromMe: false,
@@ -366,12 +366,21 @@ test('inbound customer message is forwarded with channel metadata', async () => 
       session_id: 'customer001',
     },
   ]);
+  assert.deepEqual(
+    logs.find((item) => item.message === 'whatsapp_phone_resolved').fields,
+    {
+      sessionId: 'customer001',
+      originalId: '15550003333@c.us',
+      resolvedPhone: '15550003333',
+      source: 'contact.number',
+    },
+  );
 });
 
 test('inbound LID is resolved to the real customer phone before forwarding', async () => {
   const { client, forwarded, logs, manager } = fixture();
   const lid = '198651548852233@lid';
-  client.identityLookupResult = [{ lid, pn: '18319822378@c.us' }];
+  client.identityLookupResult = [{ lid, pn: '8618319822378@c.us' }];
   await manager.connect();
   client.emit('message', {
     fromMe: false,
@@ -385,7 +394,7 @@ test('inbound LID is resolved to the real customer phone before forwarding', asy
     async getContact() {
       return {
         number: '198651548852233',
-        id: { user: '198651548852233', server: 'lid', _serialized: lid },
+        id: null,
       };
     },
   });
@@ -393,7 +402,7 @@ test('inbound LID is resolved to the real customer phone before forwarding', asy
 
   assert.deepEqual(forwarded, [
     {
-      phone: '18319822378',
+      phone: '8618319822378',
       whatsapp_lid: lid,
       message: '真实客户消息',
       channel: 'whatsapp',
@@ -404,25 +413,36 @@ test('inbound LID is resolved to the real customer phone before forwarding', asy
   ]);
   assert.deepEqual(client.identityLookup, [lid]);
   assert.deepEqual(
+    logs.find((item) => item.message === 'whatsapp_phone_resolved').fields,
+    {
+      sessionId: 'customer001',
+      originalId: lid,
+      resolvedPhone: '8618319822378',
+      source: 'getContactLidAndPhone',
+    },
+  );
+  assert.deepEqual(
     logs.find((item) => item.message === 'whatsapp_reply_target_saved').fields,
     {
       sessionId: 'customer001',
-      phone: '18319822378',
-      phoneId: '18319822378@c.us',
+      phone: '8618319822378',
+      phoneId: '8618319822378@c.us',
       chatId: null,
       lid,
     },
   );
 });
 
-test('contact id user is used only when it is a phone-number WhatsApp ID', async () => {
-  const { client, forwarded, manager } = fixture();
+test('message.from phone ID is the final inbound phone fallback', async () => {
+  const { client, forwarded, logs, manager } = fixture();
   const lid = '198651548852233@lid';
+  const phoneId = '8618319822378@c.us';
+  client.identityLookupResult = [{ lid, pn: null }];
   await manager.connect();
   client.emit('message', {
     fromMe: false,
-    from: lid,
-    body: 'Contact ID fallback',
+    from: phoneId,
+    body: 'Message from fallback',
     timestamp: 1785376800,
     id: { _serialized: 'contact-id-phone-1', remote: lid },
     async getChat() {
@@ -431,18 +451,23 @@ test('contact id user is used only when it is a phone-number WhatsApp ID', async
     async getContact() {
       return {
         number: null,
-        id: {
-          user: '18319822378',
-          server: 'c.us',
-          _serialized: '18319822378@c.us',
-        },
+        id: { user: '198651548852233', server: 'lid', _serialized: lid },
       };
     },
   });
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(forwarded[0].phone, '18319822378');
+  assert.equal(forwarded[0].phone, '8618319822378');
   assert.equal(forwarded[0].whatsapp_lid, lid);
+  assert.deepEqual(
+    logs.find((item) => item.message === 'whatsapp_phone_resolved').fields,
+    {
+      sessionId: 'customer001',
+      originalId: phoneId,
+      resolvedPhone: '8618319822378',
+      source: 'message.from',
+    },
+  );
 });
 
 test('an unresolved LID is never forwarded as the customer phone', async () => {

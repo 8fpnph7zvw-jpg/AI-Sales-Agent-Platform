@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,39 @@ class ConversationRepository:
             .with_for_update()
         )
         return await self.session.scalar(statement)
+
+    async def get_by_id_or_public_id(
+        self,
+        tenant_id: int,
+        identifier: str,
+        *,
+        for_update: bool = False,
+        assigned_user_id: int | None = None,
+    ) -> Conversation | None:
+        identifier_filter = (
+            Conversation.id == int(identifier)
+            if identifier.isdecimal()
+            else Conversation.public_id == identifier
+        )
+        statement = select(Conversation).where(
+            Conversation.tenant_id == tenant_id,
+            identifier_filter,
+        )
+        if assigned_user_id is not None:
+            statement = statement.where(Conversation.assigned_user_id == assigned_user_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return await self.session.scalar(statement)
+
+    async def delete(self, conversation: Conversation) -> None:
+        # Execute a model-level DELETE so the database's existing ON DELETE
+        # CASCADE/SET NULL rules handle related messages, runs, and quotations.
+        await self.session.execute(
+            sql_delete(Conversation).where(
+                Conversation.tenant_id == conversation.tenant_id,
+                Conversation.id == conversation.id,
+            )
+        )
 
     async def get_customer(self, tenant_id: int, public_id: str) -> Customer | None:
         return await self.session.scalar(

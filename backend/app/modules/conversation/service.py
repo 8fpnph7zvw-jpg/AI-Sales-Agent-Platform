@@ -17,6 +17,7 @@ from app.models.system.outbox_event import OutboxEvent
 from app.modules.conversation.repository import ConversationRepository
 from app.modules.conversation.schemas import (
     ConversationCreate,
+    ConversationDeleteResponse,
     ConversationListResponse,
     ConversationMessageCreate,
     ConversationMessageListResponse,
@@ -176,6 +177,31 @@ class ConversationService:
             limit=limit,
             offset=0,
         )
+
+    async def delete(
+        self,
+        principal: Principal,
+        conversation_id: str,
+    ) -> ConversationDeleteResponse:
+        assigned_user_id = (
+            None
+            if principal.permissions.intersection(
+                {"conversation.read_all", "conversation.read_team"}
+            )
+            else principal.user_id
+        )
+        conversation = await self.repository.get_by_id_or_public_id(
+            principal.tenant_id,
+            conversation_id,
+            for_update=True,
+            assigned_user_id=assigned_user_id,
+        )
+        if conversation is None:
+            raise ResourceNotFoundError("Conversation")
+
+        await self.repository.delete(conversation)
+        await self.session.commit()
+        return ConversationDeleteResponse()
 
     async def send_message(
         self,

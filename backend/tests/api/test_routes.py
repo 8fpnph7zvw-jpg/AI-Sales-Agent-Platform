@@ -16,6 +16,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/customers", "post"),
     ("/api/v1/conversations", "get"),
     ("/api/v1/conversations", "post"),
+    ("/api/v1/conversations/{conversation_id}", "delete"),
     ("/api/v1/conversations/{conversation_id}/messages", "get"),
     ("/api/v1/conversations/message", "post"),
     ("/api/v1/conversations/session-status", "post"),

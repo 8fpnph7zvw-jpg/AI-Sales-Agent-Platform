@@ -31,6 +31,11 @@ class ConversationListResponse(BaseModel):
     offset: int
 
 
+class ConversationDeleteResponse(BaseModel):
+    success: bool = True
+    message: str = "conversation deleted"
+
+
 class ConversationMessageCreate(BaseModel):
     conversation_id: str = Field(min_length=26, max_length=26)
     content: str = Field(min_length=1, max_length=20_000)

@@ -539,17 +539,19 @@ class SessionManager {
     const contactId = serializedId(contact?.id);
     const contactIdPhone = phoneFromId(contact?.id);
     const contactIdUser = normalizedPhone(contact?.id?.user);
-    const contactNumber = normalizedPhone(contact?.number);
-    const contactNumberIsLidUser = Boolean(
-      isLidId(contactId) && contactNumber && contactNumber === contactIdUser,
-    );
-    let customerPhone = contactNumberIsLidUser ? null : contactNumber;
-    if (!customerPhone && contactIdPhone) customerPhone = contactIdPhone;
     if (contactIdPhone) phoneId = contactId;
     if (isLidId(contactId)) lid = contactId;
 
-    if (!customerPhone && typeof entry.client.getContactLidAndPhone === 'function') {
-      const identityLookupId = lid || contactId || phoneId;
+    const contactNumber = normalizedPhone(contact?.number);
+    const knownLidUser = normalizedPhone((lid || '').split('@')[0]) || contactIdUser;
+    const contactNumberIsLidUser = Boolean(
+      contactNumber && knownLidUser && contactNumber === knownLidUser,
+    );
+    let customerPhone = contactNumberIsLidUser ? null : contactNumber;
+    let phoneSource = customerPhone ? 'contact.number' : null;
+
+    if (!customerPhone && lid && typeof entry.client.getContactLidAndPhone === 'function') {
+      const identityLookupId = lid;
       if (identityLookupId) {
         try {
           const identities = await entry.client.getContactLidAndPhone([identityLookupId]);
@@ -557,6 +559,7 @@ class SessionManager {
           const mappedPhoneId = serializedId(identity?.pn);
           const mappedLid = serializedId(identity?.lid);
           customerPhone = phoneFromId(mappedPhoneId);
+          if (customerPhone) phoneSource = 'getContactLidAndPhone';
           if (mappedPhoneId && isPhoneId(mappedPhoneId)) phoneId = mappedPhoneId;
           if (mappedLid && isLidId(mappedLid)) lid = mappedLid;
         } catch (error) {
@@ -570,6 +573,11 @@ class SessionManager {
     }
 
     if (!customerPhone) {
+      customerPhone = phoneFromId(fromId);
+      if (customerPhone) phoneSource = 'message.from';
+    }
+
+    if (!customerPhone) {
       const error = new Error('Unable to resolve the real customer phone from WhatsApp contact');
       this.logger.error('whatsapp_inbound_phone_resolution_failed', {
         sessionId: entry.sessionId,
@@ -579,6 +587,13 @@ class SessionManager {
       });
       throw error;
     }
+
+    this.logger.info('whatsapp_phone_resolved', {
+      sessionId: entry.sessionId,
+      originalId: fromId || remoteId || contactId || null,
+      resolvedPhone: customerPhone,
+      source: phoneSource,
+    });
 
     if (chatId || fromId || phoneId || lid) {
       this.#rememberReplyTarget(entry, customerPhone, {

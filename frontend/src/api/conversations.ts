@@ -41,6 +41,13 @@ export async function sendConversationMessage(payload: {
   return data;
 }
 
-export async function deleteConversation(conversationId: string): Promise<void> {
-  await apiClient.delete(`/conversations/${conversationId}`);
+export async function deleteConversation(conversationId: string): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  const { data } = await apiClient.delete<{
+    success: boolean;
+    message: string;
+  }>(`/conversations/${conversationId}`);
+  return data;
 }
