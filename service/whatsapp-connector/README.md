@@ -44,3 +44,12 @@ lifecycle transition.
 
 The FastAPI URL must include its API prefix, for example
 `http://localhost:8000/api/v1`.
+
+## LID-aware replies
+
+For each inbound one-to-one message, the gateway remembers the actual
+`message.from` / `chat.id` returned by WhatsApp. Automatic replies use that ID
+directly, including `@lid` IDs, instead of constructing `{phone}@c.us`. If an
+outbound request has no in-memory inbound mapping, the gateway resolves the
+number with whatsapp-web.js and then requests its LID/phone identity pair before
+sending. The `/api/whatsapp/send` request contract remains unchanged.

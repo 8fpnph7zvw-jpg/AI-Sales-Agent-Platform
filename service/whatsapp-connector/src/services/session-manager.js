@@ -15,6 +15,16 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function serializedId(value) {
+  if (typeof value === 'string') return value;
+  return value?._serialized || value?.id?._serialized || null;
+}
+
+function preferredChatId(...values) {
+  const ids = values.map(serializedId).filter(Boolean);
+  return ids.find((id) => id.endsWith('@lid')) || ids[0] || null;
+}
+
 async function withTimeout(promise, timeoutMs, message) {
   let timer;
   try {
@@ -174,6 +184,7 @@ class SessionManager {
       phone: null,
       qr: null,
       qrDataUrl: null,
+      replyTargets: new Map(),
       lastError: null,
       lastState: null,
       loadingPercent: null,
@@ -263,9 +274,20 @@ class SessionManager {
       error.statusCode = 422;
       throw error;
     }
-    const result = await entry.client.sendMessage(`${digits}@c.us`, message);
+    const { targetId, source } = await this.#resolveSendTarget(entry, digits);
+    this.logger.info('whatsapp_message_send_started', {
+      sessionId,
+      targetId,
+      messageLength: message.length,
+      targetSource: source,
+    });
+    const chat = await entry.client.getChatById(targetId);
+    const result = chat
+      ? await chat.sendMessage(message)
+      : await entry.client.sendMessage(targetId, message);
     this.logger.info('whatsapp_message_sent', {
       sessionId,
+      targetId,
       phoneSuffix: digits.slice(-4),
       messageId: result?.id?._serialized || null,
     });
@@ -391,6 +413,19 @@ class SessionManager {
     if (message.fromMe || !message.body?.trim()) return;
     if (!this.config.acceptGroupMessages && message.from.endsWith('@g.us')) return;
 
+    let targetId = serializedId(message.from);
+    if (typeof message.getChat === 'function') {
+      try {
+        const chat = await message.getChat();
+        targetId = preferredChatId(chat?.id, targetId);
+      } catch (error) {
+        this.logger.warn('whatsapp_inbound_chat_lookup_failed', {
+          sessionId: entry.sessionId,
+          messageId: message.id?._serialized || null,
+          error: error.message,
+        });
+      }
+    }
     let phone = message.from.split('@')[0];
     try {
       const contact = await message.getContact();
@@ -401,15 +436,58 @@ class SessionManager {
         error: error.message,
       });
     }
+    const normalizedPhone = String(phone).replace(/\D/g, '');
+    if (targetId && normalizedPhone) {
+      this.#rememberReplyTarget(entry, normalizedPhone, targetId);
+    }
     const timestamp = Number(message.timestamp) || Math.floor(Date.now() / 1000);
     await this.backendService.forwardInbound({
-      phone: String(phone).replace(/\D/g, ''),
+      phone: normalizedPhone,
       message: message.body.trim(),
       channel: 'whatsapp',
       timestamp,
       message_id: message.id?._serialized || `${entry.sessionId}:${timestamp}:${phone}`,
       session_id: entry.sessionId,
     });
+  }
+
+  #rememberReplyTarget(entry, phone, targetId) {
+    entry.replyTargets.delete(phone);
+    entry.replyTargets.set(phone, targetId);
+    if (entry.replyTargets.size > 10_000) {
+      entry.replyTargets.delete(entry.replyTargets.keys().next().value);
+    }
+    this.logger.info('whatsapp_reply_target_saved', {
+      sessionId: entry.sessionId,
+      targetId,
+      source: 'inbound_chat',
+    });
+  }
+
+  async #resolveSendTarget(entry, digits) {
+    const remembered = entry.replyTargets.get(digits);
+    if (remembered) {
+      return { targetId: remembered, source: 'inbound_chat' };
+    }
+
+    const numberId = await entry.client.getNumberId(digits);
+    const phoneId = serializedId(numberId);
+    if (!phoneId) {
+      const error = new Error(`No WhatsApp user found for phone ending ${digits.slice(-4)}`);
+      error.statusCode = 422;
+      throw error;
+    }
+
+    if (typeof entry.client.getContactLidAndPhone === 'function') {
+      const identities = await entry.client.getContactLidAndPhone([phoneId]);
+      const identity = Array.isArray(identities) ? identities[0] : null;
+      const lid = serializedId(identity?.lid);
+      const resolvedPhoneId = serializedId(identity?.pn);
+      if (lid) return { targetId: lid, source: 'lid_lookup' };
+      if (resolvedPhoneId) return { targetId: resolvedPhoneId, source: 'phone_lookup' };
+    }
+
+    return { targetId: phoneId, source: 'number_lookup' };
   }
 
   #startReadyWatchdog(entry) {

@@ -24,6 +24,23 @@ class FakeClient extends EventEmitter {
     this.destroyed = true;
   }
 
+  async getNumberId(number) {
+    this.numberLookup = number;
+    return { _serialized: `${number}@c.us` };
+  }
+
+  async getContactLidAndPhone(userIds) {
+    this.identityLookup = userIds;
+    return [{ lid: `${userIds[0].split('@')[0]}@lid`, pn: userIds[0] }];
+  }
+
+  async getChatById(chatId) {
+    this.chatLookup = chatId;
+    return {
+      sendMessage: async (message) => this.sendMessage(chatId, message),
+    };
+  }
+
   async sendMessage(chatId, message) {
     this.sent = { chatId, message };
     return { id: { _serialized: 'outbound-1' } };
@@ -41,6 +58,7 @@ async function waitFor(predicate, timeoutMs = 1_000) {
 function fixture() {
   const client = new FakeClient();
   const forwarded = [];
+  const logs = [];
   const statuses = [];
   const manager = new SessionManager(
     {
@@ -55,14 +73,18 @@ function fixture() {
         statuses.push(payload);
       },
     },
-    { info() {}, warn() {}, error() {} },
+    {
+      info(message, fields) { logs.push({ message, fields }); },
+      warn() {},
+      error() {},
+    },
     () => client,
   );
-  return { client, forwarded, manager, statuses };
+  return { client, forwarded, logs, manager, statuses };
 }
 
-test('connect tracks LocalAuth lifecycle and sends messages', async () => {
-  const { client, manager, statuses } = fixture();
+test('connect tracks LocalAuth lifecycle and resolves a LID before sending messages', async () => {
+  const { client, logs, manager, statuses } = fixture();
   assert.equal((await manager.connect()).status, 'CONNECTING');
 
   client.emit('ready');
@@ -80,9 +102,20 @@ test('connect tracks LocalAuth lifecycle and sends messages', async () => {
   });
   assert.deepEqual(result, { messageId: 'outbound-1', status: 'SENT' });
   assert.deepEqual(client.sent, {
-    chatId: '15550002222@c.us',
+    chatId: '15550002222@lid',
     message: 'AI reply',
   });
+  assert.equal(client.numberLookup, '15550002222');
+  assert.equal(client.chatLookup, '15550002222@lid');
+  assert.deepEqual(
+    logs.find((item) => item.message === 'whatsapp_message_send_started').fields,
+    {
+      sessionId: 'customer001',
+      targetId: '15550002222@lid',
+      messageLength: 8,
+      targetSource: 'lid_lookup',
+    },
+  );
   assert.deepEqual(statuses, [
     {
       session_id: 'customer001',
@@ -92,6 +125,35 @@ test('connect tracks LocalAuth lifecycle and sends messages', async () => {
       data_url: null,
     },
   ]);
+});
+
+test('automatic reply uses the inbound LID chat instead of constructing a phone chat ID', async () => {
+  const { client, manager } = fixture();
+  await manager.connect();
+  client.emit('ready');
+  client.emit('message', {
+    fromMe: false,
+    from: '987654321012345@lid',
+    body: 'Need help',
+    timestamp: 1785376800,
+    id: { _serialized: 'lid-inbound-1' },
+    async getChat() {
+      return { id: { _serialized: '15550004444@c.us' } };
+    },
+    async getContact() {
+      return { number: '15550004444' };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await manager.send({ phone: '15550004444', message: 'Dify reply' });
+
+  assert.equal(client.numberLookup, undefined);
+  assert.equal(client.chatLookup, '987654321012345@lid');
+  assert.deepEqual(client.sent, {
+    chatId: '987654321012345@lid',
+    message: 'Dify reply',
+  });
 });
 
 test('inbound customer message is forwarded with channel metadata', async () => {
