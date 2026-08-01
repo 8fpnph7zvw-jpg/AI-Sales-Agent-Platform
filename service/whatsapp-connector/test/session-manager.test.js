@@ -37,6 +37,7 @@ class FakeClient extends EventEmitter {
 
   async getContactLidAndPhone(userIds) {
     this.identityLookup = userIds;
+    if (Object.hasOwn(this, 'identityLookupResult')) return this.identityLookupResult;
     return [{ lid: `${userIds[0].split('@')[0]}@lid`, pn: userIds[0] }];
   }
 
@@ -357,6 +358,7 @@ test('inbound customer message is forwarded with channel metadata', async () => 
   assert.deepEqual(forwarded, [
     {
       phone: '15550003333',
+      whatsapp_lid: null,
       message: 'Need a quote',
       channel: 'whatsapp',
       timestamp: 1785376800,
@@ -364,6 +366,111 @@ test('inbound customer message is forwarded with channel metadata', async () => 
       session_id: 'customer001',
     },
   ]);
+});
+
+test('inbound LID is resolved to the real customer phone before forwarding', async () => {
+  const { client, forwarded, logs, manager } = fixture();
+  const lid = '198651548852233@lid';
+  client.identityLookupResult = [{ lid, pn: '18319822378@c.us' }];
+  await manager.connect();
+  client.emit('message', {
+    fromMe: false,
+    from: lid,
+    body: '真实客户消息',
+    timestamp: 1785376800,
+    id: { _serialized: 'lid-real-phone-1', remote: lid },
+    async getChat() {
+      return { id: { _serialized: lid } };
+    },
+    async getContact() {
+      return {
+        number: '198651548852233',
+        id: { user: '198651548852233', server: 'lid', _serialized: lid },
+      };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(forwarded, [
+    {
+      phone: '18319822378',
+      whatsapp_lid: lid,
+      message: '真实客户消息',
+      channel: 'whatsapp',
+      timestamp: 1785376800,
+      message_id: 'lid-real-phone-1',
+      session_id: 'customer001',
+    },
+  ]);
+  assert.deepEqual(client.identityLookup, [lid]);
+  assert.deepEqual(
+    logs.find((item) => item.message === 'whatsapp_reply_target_saved').fields,
+    {
+      sessionId: 'customer001',
+      phone: '18319822378',
+      phoneId: '18319822378@c.us',
+      chatId: null,
+      lid,
+    },
+  );
+});
+
+test('contact id user is used only when it is a phone-number WhatsApp ID', async () => {
+  const { client, forwarded, manager } = fixture();
+  const lid = '198651548852233@lid';
+  await manager.connect();
+  client.emit('message', {
+    fromMe: false,
+    from: lid,
+    body: 'Contact ID fallback',
+    timestamp: 1785376800,
+    id: { _serialized: 'contact-id-phone-1', remote: lid },
+    async getChat() {
+      return { id: { _serialized: lid } };
+    },
+    async getContact() {
+      return {
+        number: null,
+        id: {
+          user: '18319822378',
+          server: 'c.us',
+          _serialized: '18319822378@c.us',
+        },
+      };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(forwarded[0].phone, '18319822378');
+  assert.equal(forwarded[0].whatsapp_lid, lid);
+});
+
+test('an unresolved LID is never forwarded as the customer phone', async () => {
+  const { client, forwarded, logs, manager } = fixture();
+  const lid = '198651548852233@lid';
+  client.identityLookupResult = [{ lid, pn: null }];
+  await manager.connect();
+  client.emit('message', {
+    fromMe: false,
+    from: lid,
+    body: 'Cannot resolve phone',
+    timestamp: 1785376800,
+    id: { _serialized: 'unresolved-lid-1', remote: lid },
+    async getChat() {
+      return { id: { _serialized: lid } };
+    },
+    async getContact() {
+      return {
+        number: '198651548852233',
+        id: { user: '198651548852233', server: 'lid', _serialized: lid },
+      };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(forwarded, []);
+  assert.ok(logs.some((item) => item.message === 'whatsapp_inbound_phone_resolution_failed'));
+  assert.ok(logs.some((item) => item.message === 'whatsapp_inbound_processing_failed'));
 });
 
 test('reconnect replaces the runtime client and disconnect removes it', async () => {

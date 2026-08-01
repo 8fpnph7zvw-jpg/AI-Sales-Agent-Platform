@@ -31,6 +31,17 @@ function isPhoneId(value) {
   return typeof value === 'string' && /@(c\.us|s\.whatsapp\.net)$/.test(value);
 }
 
+function normalizedPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 5 && digits.length <= 20 ? digits : null;
+}
+
+function phoneFromId(value) {
+  const id = serializedId(value);
+  if (!isPhoneId(id)) return null;
+  return normalizedPhone(id.split('@')[0]);
+}
+
 function normalizedReplyTarget(value) {
   if (!value) return { phoneId: null, chatId: null, fromId: null, lid: null };
   if (typeof value === 'string') {
@@ -512,22 +523,65 @@ class SessionManager {
       }
     }
     const inboundIds = [remoteId, fromId, resolvedChatId].filter(Boolean);
-    const phoneId = inboundIds.find(isPhoneId) || null;
+    let phoneId = inboundIds.find(isPhoneId) || null;
     const chatId = inboundIds.find((id) => !isLidId(id)) || null;
-    const lid = inboundIds.find(isLidId) || null;
-    let phone = message.from.split('@')[0];
+    let lid = inboundIds.find(isLidId) || null;
+    let contact = null;
     try {
-      const contact = await message.getContact();
-      phone = contact.number || phone;
+      contact = await message.getContact();
     } catch (error) {
       this.logger.warn('whatsapp_contact_lookup_failed', {
         sessionId: entry.sessionId,
         error: error.message,
       });
     }
-    const normalizedPhone = String(phone).replace(/\D/g, '');
-    if (normalizedPhone && (chatId || fromId || phoneId || lid)) {
-      this.#rememberReplyTarget(entry, normalizedPhone, {
+
+    const contactId = serializedId(contact?.id);
+    const contactIdPhone = phoneFromId(contact?.id);
+    const contactIdUser = normalizedPhone(contact?.id?.user);
+    const contactNumber = normalizedPhone(contact?.number);
+    const contactNumberIsLidUser = Boolean(
+      isLidId(contactId) && contactNumber && contactNumber === contactIdUser,
+    );
+    let customerPhone = contactNumberIsLidUser ? null : contactNumber;
+    if (!customerPhone && contactIdPhone) customerPhone = contactIdPhone;
+    if (contactIdPhone) phoneId = contactId;
+    if (isLidId(contactId)) lid = contactId;
+
+    if (!customerPhone && typeof entry.client.getContactLidAndPhone === 'function') {
+      const identityLookupId = lid || contactId || phoneId;
+      if (identityLookupId) {
+        try {
+          const identities = await entry.client.getContactLidAndPhone([identityLookupId]);
+          const identity = Array.isArray(identities) ? identities[0] : null;
+          const mappedPhoneId = serializedId(identity?.pn);
+          const mappedLid = serializedId(identity?.lid);
+          customerPhone = phoneFromId(mappedPhoneId);
+          if (mappedPhoneId && isPhoneId(mappedPhoneId)) phoneId = mappedPhoneId;
+          if (mappedLid && isLidId(mappedLid)) lid = mappedLid;
+        } catch (error) {
+          this.logger.warn('whatsapp_inbound_lid_phone_lookup_failed', {
+            sessionId: entry.sessionId,
+            lid,
+            error: error.message || String(error),
+          });
+        }
+      }
+    }
+
+    if (!customerPhone) {
+      const error = new Error('Unable to resolve the real customer phone from WhatsApp contact');
+      this.logger.error('whatsapp_inbound_phone_resolution_failed', {
+        sessionId: entry.sessionId,
+        messageId: message.id?._serialized || null,
+        contactId,
+        lid,
+      });
+      throw error;
+    }
+
+    if (chatId || fromId || phoneId || lid) {
+      this.#rememberReplyTarget(entry, customerPhone, {
         phoneId,
         chatId,
         fromId,
@@ -536,11 +590,12 @@ class SessionManager {
     }
     const timestamp = Number(message.timestamp) || Math.floor(Date.now() / 1000);
     await this.backendService.forwardInbound({
-      phone: normalizedPhone,
+      phone: customerPhone,
+      whatsapp_lid: lid,
       message: message.body.trim(),
       channel: 'whatsapp',
       timestamp,
-      message_id: message.id?._serialized || `${entry.sessionId}:${timestamp}:${phone}`,
+      message_id: message.id?._serialized || `${entry.sessionId}:${timestamp}:${customerPhone}`,
       session_id: entry.sessionId,
     });
   }
