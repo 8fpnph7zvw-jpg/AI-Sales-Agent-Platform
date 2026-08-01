@@ -16,6 +16,14 @@ function integerValue(name, fallback) {
   return value;
 }
 
+function boundedIntegerValue(name, fallback, minimum, maximum) {
+  const value = Number.parseInt(process.env[name] || String(fallback), 10);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
 function optionalUrl(name) {
   const value = (process.env[name] || '').trim();
   if (!value) return '';
@@ -30,6 +38,10 @@ const sessionsPath = path.resolve(
   process.cwd(),
   process.env.WHATSAPP_SESSIONS_PATH || './sessions',
 );
+const webVersionCachePath = path.resolve(
+  sessionsPath,
+  process.env.WHATSAPP_WEB_VERSION_CACHE_PATH || '.wwebjs_cache',
+);
 
 module.exports = Object.freeze({
   host: process.env.HOST || '0.0.0.0',
@@ -41,8 +53,24 @@ module.exports = Object.freeze({
   difyApiKey: process.env.DIFY_API_KEY || '',
   connectorApiToken: process.env.CONNECTOR_API_TOKEN || '',
   defaultSessionId: process.env.WHATSAPP_SESSION_ID || 'customer001',
-  autoConnect: booleanValue('WHATSAPP_AUTO_CONNECT', false),
+  autoRestoreSessions: booleanValue('WHATSAPP_AUTO_RESTORE_SESSIONS', true),
+  autoRestoreDefaultSession: booleanValue('WHATSAPP_AUTO_RESTORE_DEFAULT_SESSION', false),
   sessionsPath,
+  webVersionCachePath,
+  readyTimeoutMs: boundedIntegerValue('WHATSAPP_READY_TIMEOUT_MS', 120_000, 10_000, 600_000),
+  readyRetryLimit: boundedIntegerValue('WHATSAPP_READY_RETRY_LIMIT', 1, 0, 5),
+  browserShutdownTimeoutMs: boundedIntegerValue(
+    'WHATSAPP_BROWSER_SHUTDOWN_TIMEOUT_MS',
+    10_000,
+    1_000,
+    60_000,
+  ),
+  profileUnlockTimeoutMs: boundedIntegerValue(
+    'WHATSAPP_PROFILE_UNLOCK_TIMEOUT_MS',
+    5_000,
+    500,
+    60_000,
+  ),
   acceptGroupMessages: booleanValue('WHATSAPP_ACCEPT_GROUP_MESSAGES', false),
   puppeteerExecutablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
   puppeteerHeadless: booleanValue('PUPPETEER_HEADLESS', true),

@@ -9,7 +9,7 @@
     "start": "node --preserve-symlinks src/server.js",
     "dev": "node --preserve-symlinks --watch src/server.js",
     "install:dependencies": "node scripts/install-dependencies.js",
-    "check": "node --check src/server.js && node --check src/client.js && node --check src/config.js && node --check src/routes/whatsapp.js && node --check src/services/backend.js && node --check src/services/session-manager.js",
+    "check": "node --check src/server.js && node --check src/client.js && node --check src/config.js && node --check src/routes/whatsapp.js && node --check src/services/backend.js && node --check src/services/session-manager.js && node --check src/services/session-store.js",
     "test": "node --preserve-symlinks --test"
   },
   "engines": {

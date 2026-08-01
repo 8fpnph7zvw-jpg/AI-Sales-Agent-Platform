@@ -5,6 +5,7 @@ const { createLogger } = require('./logger');
 const { createWhatsAppRouter } = require('./routes/whatsapp');
 const { BackendService } = require('./services/backend');
 const { SessionManager } = require('./services/session-manager');
+const whatsappWebJsVersion = require('whatsapp-web.js/package.json').version;
 
 const logger = createLogger(config.logLevel);
 const backendService = new BackendService(config, logger);
@@ -45,13 +46,14 @@ const server = app.listen(config.port, config.host, () => {
     host: config.host,
     port: config.port,
     sessionsPath: config.sessionsPath,
-    autoConnect: config.autoConnect,
+    webVersionCachePath: config.webVersionCachePath,
+    whatsappWebJsVersion,
+    autoRestoreSessions: config.autoRestoreSessions,
+    autoRestoreDefaultSession: config.autoRestoreDefaultSession,
   });
-  if (config.autoConnect) {
-    manager.connect(config.defaultSessionId).catch((error) => {
-      logger.error('whatsapp_auto_connect_failed', { error: error.message });
-    });
-  }
+  manager.restoreConfiguredSessions().catch((error) => {
+    logger.error('whatsapp_session_restore_failed', { error: error.message });
+  });
 });
 
 async function shutdown(signal) {
