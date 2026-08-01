@@ -12,6 +12,10 @@ class FakeClient extends EventEmitter {
     super();
     this.info = { wid: { user: '15550001111' } };
     this.destroyed = false;
+    this.chatLookups = [];
+    this.sendAttempts = [];
+    this.chatSendErrors = new Map();
+    this.directSendErrors = new Map();
   }
 
   async initialize() {}
@@ -26,6 +30,8 @@ class FakeClient extends EventEmitter {
 
   async getNumberId(number) {
     this.numberLookup = number;
+    if (this.numberIdResults?.length) return this.numberIdResults.shift();
+    if (Object.hasOwn(this, 'numberIdResult')) return this.numberIdResult;
     return { _serialized: `${number}@c.us` };
   }
 
@@ -36,12 +42,22 @@ class FakeClient extends EventEmitter {
 
   async getChatById(chatId) {
     this.chatLookup = chatId;
+    this.chatLookups.push(chatId);
+    if (this.chatLookupErrors?.has(chatId)) throw this.chatLookupErrors.get(chatId);
+    if (this.missingChats?.has(chatId)) return undefined;
     return {
-      sendMessage: async (message) => this.sendMessage(chatId, message),
+      sendMessage: async (message) => {
+        this.sendAttempts.push({ method: 'chat', chatId, message });
+        if (this.chatSendErrors.has(chatId)) throw this.chatSendErrors.get(chatId);
+        this.sent = { chatId, message };
+        return { id: { _serialized: 'outbound-1' } };
+      },
     };
   }
 
   async sendMessage(chatId, message) {
+    this.sendAttempts.push({ method: 'client', chatId, message });
+    if (this.directSendErrors.has(chatId)) throw this.directSendErrors.get(chatId);
     this.sent = { chatId, message };
     return { id: { _serialized: 'outbound-1' } };
   }
@@ -76,14 +92,14 @@ function fixture() {
     {
       info(message, fields) { logs.push({ message, fields }); },
       warn() {},
-      error() {},
+      error(message, fields) { logs.push({ message, fields }); },
     },
     () => client,
   );
   return { client, forwarded, logs, manager, statuses };
 }
 
-test('connect tracks LocalAuth lifecycle and resolves a LID before sending messages', async () => {
+test('connect tracks LocalAuth lifecycle and resolves a phone ID before LID', async () => {
   const { client, logs, manager, statuses } = fixture();
   assert.equal((await manager.connect()).status, 'CONNECTING');
 
@@ -102,18 +118,18 @@ test('connect tracks LocalAuth lifecycle and resolves a LID before sending messa
   });
   assert.deepEqual(result, { messageId: 'outbound-1', status: 'SENT' });
   assert.deepEqual(client.sent, {
-    chatId: '15550002222@lid',
+    chatId: '15550002222@c.us',
     message: 'AI reply',
   });
   assert.equal(client.numberLookup, '15550002222');
-  assert.equal(client.chatLookup, '15550002222@lid');
+  assert.equal(client.chatLookup, '15550002222@c.us');
   assert.deepEqual(
     logs.find((item) => item.message === 'whatsapp_message_send_started').fields,
     {
       sessionId: 'customer001',
-      targetId: '15550002222@lid',
+      targetId: '15550002222@c.us',
       messageLength: 8,
-      targetSource: 'lid_lookup',
+      targetSource: 'phoneId',
     },
   );
   assert.deepEqual(statuses, [
@@ -127,8 +143,8 @@ test('connect tracks LocalAuth lifecycle and resolves a LID before sending messa
   ]);
 });
 
-test('automatic reply uses the inbound LID chat instead of constructing a phone chat ID', async () => {
-  const { client, manager } = fixture();
+test('automatic reply saves and uses the inbound phone chat ID before LID', async () => {
+  const { client, logs, manager } = fixture();
   await manager.connect();
   client.emit('ready');
   client.emit('message', {
@@ -136,7 +152,10 @@ test('automatic reply uses the inbound LID chat instead of constructing a phone 
     from: '987654321012345@lid',
     body: 'Need help',
     timestamp: 1785376800,
-    id: { _serialized: 'lid-inbound-1' },
+    id: {
+      _serialized: 'lid-inbound-1',
+      remote: '18319822378@c.us',
+    },
     async getChat() {
       return { id: { _serialized: '15550004444@c.us' } };
     },
@@ -149,11 +168,175 @@ test('automatic reply uses the inbound LID chat instead of constructing a phone 
   await manager.send({ phone: '15550004444', message: 'Dify reply' });
 
   assert.equal(client.numberLookup, undefined);
-  assert.equal(client.chatLookup, '987654321012345@lid');
+  assert.equal(client.chatLookup, '18319822378@c.us');
   assert.deepEqual(client.sent, {
-    chatId: '987654321012345@lid',
+    chatId: '18319822378@c.us',
     message: 'Dify reply',
   });
+  assert.deepEqual(
+    logs.find((item) => item.message === 'whatsapp_reply_target_saved').fields,
+    {
+      sessionId: 'customer001',
+      phone: '15550004444',
+      phoneId: '18319822378@c.us',
+      chatId: '18319822378@c.us',
+      lid: '987654321012345@lid',
+    },
+  );
+});
+
+test('automatic reply can send when the inbound conversation only exposes a LID', async () => {
+  const { client, manager } = fixture();
+  client.numberIdResult = null;
+  await manager.connect();
+  client.emit('ready');
+  client.emit('message', {
+    fromMe: false,
+    from: '198651548852233@lid',
+    body: 'Only LID is available',
+    timestamp: 1785376800,
+    id: { _serialized: 'lid-only-1', remote: '198651548852233@lid' },
+    async getChat() {
+      return { id: { _serialized: '198651548852233@lid' } };
+    },
+    async getContact() {
+      return { number: '18319822378' };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await manager.send({ phone: '18319822378', message: 'LID reply' });
+
+  assert.deepEqual(client.chatLookups, ['198651548852233@lid']);
+  assert.deepEqual(client.sent, {
+    chatId: '198651548852233@lid',
+    message: 'LID reply',
+  });
+});
+
+test('failed LID send retries number resolution and falls back to phoneId', async () => {
+  const { client, manager } = fixture();
+  const lid = '198651548852233@lid';
+  const phoneId = '18319822378@c.us';
+  client.numberIdResults = [null, { _serialized: phoneId }];
+  client.chatLookupErrors = new Map([[lid, new Error('LID chat lookup failed')]]);
+  client.directSendErrors.set(lid, new Error('LID direct send failed'));
+  await manager.connect();
+  client.emit('ready');
+  client.emit('message', {
+    fromMe: false,
+    from: lid,
+    body: 'Retry with phone ID',
+    timestamp: 1785376800,
+    id: { _serialized: 'lid-phone-fallback-1', remote: lid },
+    async getChat() {
+      return { id: { _serialized: lid } };
+    },
+    async getContact() {
+      return { number: '18319822378' };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await manager.send({ phone: '18319822378', message: 'Phone fallback reply' });
+
+  assert.deepEqual(client.chatLookups, [lid, phoneId]);
+  assert.deepEqual(client.sent, {
+    chatId: phoneId,
+    message: 'Phone fallback reply',
+  });
+});
+
+test('failed phone chat lookup and direct send fall back to the cached LID', async () => {
+  const { client, logs, manager } = fixture();
+  client.chatLookupErrors = new Map([
+    ['18319822378@c.us', new Error('phone chat is not cached')],
+  ]);
+  client.directSendErrors.set('18319822378@c.us', new Error('No LID for user'));
+  await manager.connect();
+  client.emit('ready');
+  client.emit('message', {
+    fromMe: false,
+    from: '198651548852233@lid',
+    body: 'Need fallback',
+    timestamp: 1785376800,
+    id: { _serialized: 'fallback-1', remote: '18319822378@c.us' },
+    async getChat() {
+      return { id: { _serialized: '18319822378@c.us' } };
+    },
+    async getContact() {
+      return { number: '18319822378' };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await manager.send({ phone: '18319822378', message: 'Fallback reply' });
+
+  assert.deepEqual(client.chatLookups, ['18319822378@c.us', '198651548852233@lid']);
+  assert.deepEqual(client.sent, {
+    chatId: '198651548852233@lid',
+    message: 'Fallback reply',
+  });
+  assert.deepEqual(
+    logs
+      .filter((item) => item.message === 'whatsapp_message_send_attempt')
+      .map((item) => item.fields.targetId),
+    ['18319822378@c.us', '198651548852233@lid'],
+  );
+  assert.equal(
+    logs.find((item) => item.message === 'whatsapp_message_sent').fields.finalTargetId,
+    '198651548852233@lid',
+  );
+});
+
+test('send failure is logged only after every phone and LID target fails', async () => {
+  const { client, logs, manager } = fixture();
+  const phoneId = '18319822378@c.us';
+  const lid = '198651548852233@lid';
+  const resolvedLid = '18319822378@lid';
+  client.chatLookupErrors = new Map([
+    [phoneId, new Error('phone chat lookup failed')],
+    [lid, new Error('LID chat lookup failed')],
+    [resolvedLid, new Error('resolved LID chat lookup failed')],
+  ]);
+  client.directSendErrors.set(phoneId, new Error('phone direct send failed'));
+  client.directSendErrors.set(lid, new Error('LID direct send failed'));
+  client.directSendErrors.set(resolvedLid, new Error('resolved LID direct send failed'));
+  await manager.connect();
+  client.emit('ready');
+  client.emit('message', {
+    fromMe: false,
+    from: lid,
+    body: 'All targets fail',
+    timestamp: 1785376800,
+    id: { _serialized: 'all-fail-1', remote: phoneId },
+    async getChat() {
+      return { id: { _serialized: phoneId } };
+    },
+    async getContact() {
+      return { number: '18319822378' };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await assert.rejects(
+    manager.send({ phone: '18319822378', message: 'Cannot send' }),
+    /Unable to send WhatsApp message using targets/,
+  );
+
+  const failure = logs.find((item) => item.message === 'whatsapp_message_send_failed');
+  assert.deepEqual(failure.fields.attemptedTargetIds, [phoneId, lid, resolvedLid]);
+  assert.deepEqual(
+    failure.fields.errors.map(({ targetId, operation }) => ({ targetId, operation })),
+    [
+      { targetId: phoneId, operation: 'getChatById' },
+      { targetId: phoneId, operation: 'client.sendMessage' },
+      { targetId: lid, operation: 'getChatById' },
+      { targetId: lid, operation: 'client.sendMessage' },
+      { targetId: resolvedLid, operation: 'getChatById' },
+      { targetId: resolvedLid, operation: 'client.sendMessage' },
+    ],
+  );
 });
 
 test('inbound customer message is forwarded with channel metadata', async () => {

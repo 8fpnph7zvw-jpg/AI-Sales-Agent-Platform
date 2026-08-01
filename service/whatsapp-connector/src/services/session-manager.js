@@ -17,12 +17,36 @@ function delay(ms) {
 
 function serializedId(value) {
   if (typeof value === 'string') return value;
-  return value?._serialized || value?.id?._serialized || null;
+  if (value?._serialized) return value._serialized;
+  if (value?.id?._serialized) return value.id._serialized;
+  if (value?.user && value?.server) return `${value.user}@${value.server}`;
+  return null;
 }
 
-function preferredChatId(...values) {
-  const ids = values.map(serializedId).filter(Boolean);
-  return ids.find((id) => id.endsWith('@lid')) || ids[0] || null;
+function isLidId(value) {
+  return typeof value === 'string' && value.endsWith('@lid');
+}
+
+function isPhoneId(value) {
+  return typeof value === 'string' && /@(c\.us|s\.whatsapp\.net)$/.test(value);
+}
+
+function normalizedReplyTarget(value) {
+  if (!value) return { phoneId: null, chatId: null, fromId: null, lid: null };
+  if (typeof value === 'string') {
+    return {
+      phoneId: isPhoneId(value) ? value : null,
+      chatId: isLidId(value) ? null : value,
+      fromId: value,
+      lid: isLidId(value) ? value : null,
+    };
+  }
+  return {
+    phoneId: serializedId(value.phoneId),
+    chatId: serializedId(value.chatId),
+    fromId: serializedId(value.fromId),
+    lid: serializedId(value.lid),
+  };
 }
 
 async function withTimeout(promise, timeoutMs, message) {
@@ -274,27 +298,86 @@ class SessionManager {
       error.statusCode = 422;
       throw error;
     }
-    const { targetId, source } = await this.#resolveSendTarget(entry, digits);
+    const { candidates } = await this.#resolveSendTarget(entry, digits);
+    const primaryTarget = candidates[0];
     this.logger.info('whatsapp_message_send_started', {
       sessionId,
-      targetId,
+      targetId: primaryTarget.targetId,
       messageLength: message.length,
-      targetSource: source,
+      targetSource: primaryTarget.targetType,
     });
-    const chat = await entry.client.getChatById(targetId);
-    const result = chat
-      ? await chat.sendMessage(message)
-      : await entry.client.sendMessage(targetId, message);
-    this.logger.info('whatsapp_message_sent', {
+    const failures = [];
+    let latePhoneLookupAttempted = false;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      const { targetId, targetType } = candidate;
+      this.logger.info('whatsapp_message_send_attempt', {
+        sessionId,
+        targetId,
+        targetType,
+        messageLength: message.length,
+      });
+
+      let chat;
+      try {
+        chat = await entry.client.getChatById(targetId);
+      } catch (error) {
+        failures.push({ targetId, operation: 'getChatById', error: error.message || String(error) });
+      }
+
+      if (chat) {
+        try {
+          const result = await chat.sendMessage(message);
+          this.#logMessageSent(entry, digits, targetId, result);
+          return { messageId: result?.id?._serialized || null, status: 'SENT' };
+        } catch (error) {
+          failures.push({ targetId, operation: 'chat.sendMessage', error: error.message || String(error) });
+          continue;
+        }
+      }
+
+      try {
+        const result = await entry.client.sendMessage(targetId, message);
+        this.#logMessageSent(entry, digits, targetId, result);
+        return { messageId: result?.id?._serialized || null, status: 'SENT' };
+      } catch (error) {
+        failures.push({ targetId, operation: 'client.sendMessage', error: error.message || String(error) });
+      }
+
+      const onlyLidCandidates = candidates.every((item) => isLidId(item.targetId));
+      if (
+        isLidId(targetId)
+        && index === candidates.length - 1
+        && onlyLidCandidates
+        && !latePhoneLookupAttempted
+      ) {
+        latePhoneLookupAttempted = true;
+        try {
+          const fallbackPhoneId = serializedId(await entry.client.getNumberId(digits));
+          if (fallbackPhoneId && !isLidId(fallbackPhoneId)) {
+            candidates.push({ targetId: fallbackPhoneId, targetType: 'phoneId' });
+          }
+        } catch (error) {
+          this.logger.warn('whatsapp_phone_fallback_lookup_failed', {
+            sessionId,
+            phoneSuffix: digits.slice(-4),
+            error: error.message || String(error),
+          });
+        }
+      }
+    }
+
+    const attemptedTargetIds = candidates.map((candidate) => candidate.targetId);
+    this.logger.error('whatsapp_message_send_failed', {
       sessionId,
-      targetId,
-      phoneSuffix: digits.slice(-4),
-      messageId: result?.id?._serialized || null,
+      attemptedTargetIds,
+      errors: failures,
     });
-    return {
-      messageId: result?.id?._serialized || null,
-      status: 'SENT',
-    };
+    const error = new Error(
+      `Unable to send WhatsApp message using targets: ${attemptedTargetIds.join(', ')}`,
+    );
+    error.statusCode = 500;
+    throw error;
   }
 
   async shutdown() {
@@ -413,11 +496,13 @@ class SessionManager {
     if (message.fromMe || !message.body?.trim()) return;
     if (!this.config.acceptGroupMessages && message.from.endsWith('@g.us')) return;
 
-    let targetId = serializedId(message.from);
+    const remoteId = serializedId(message.id?.remote);
+    const fromId = serializedId(message.from);
+    let resolvedChatId = null;
     if (typeof message.getChat === 'function') {
       try {
         const chat = await message.getChat();
-        targetId = preferredChatId(chat?.id, targetId);
+        resolvedChatId = serializedId(chat?.id);
       } catch (error) {
         this.logger.warn('whatsapp_inbound_chat_lookup_failed', {
           sessionId: entry.sessionId,
@@ -426,6 +511,10 @@ class SessionManager {
         });
       }
     }
+    const inboundIds = [remoteId, fromId, resolvedChatId].filter(Boolean);
+    const phoneId = inboundIds.find(isPhoneId) || null;
+    const chatId = inboundIds.find((id) => !isLidId(id)) || null;
+    const lid = inboundIds.find(isLidId) || null;
     let phone = message.from.split('@')[0];
     try {
       const contact = await message.getContact();
@@ -437,8 +526,13 @@ class SessionManager {
       });
     }
     const normalizedPhone = String(phone).replace(/\D/g, '');
-    if (targetId && normalizedPhone) {
-      this.#rememberReplyTarget(entry, normalizedPhone, targetId);
+    if (normalizedPhone && (chatId || fromId || phoneId || lid)) {
+      this.#rememberReplyTarget(entry, normalizedPhone, {
+        phoneId,
+        chatId,
+        fromId,
+        lid,
+      });
     }
     const timestamp = Number(message.timestamp) || Math.floor(Date.now() / 1000);
     await this.backendService.forwardInbound({
@@ -451,43 +545,97 @@ class SessionManager {
     });
   }
 
-  #rememberReplyTarget(entry, phone, targetId) {
+  #rememberReplyTarget(entry, phone, target) {
+    const previous = normalizedReplyTarget(entry.replyTargets.get(phone));
+    const incoming = normalizedReplyTarget(target);
+    const saved = {
+      phoneId: incoming.phoneId || previous.phoneId,
+      chatId: incoming.chatId || previous.chatId,
+      fromId: incoming.fromId || previous.fromId,
+      lid: incoming.lid || previous.lid,
+    };
     entry.replyTargets.delete(phone);
-    entry.replyTargets.set(phone, targetId);
+    entry.replyTargets.set(phone, saved);
     if (entry.replyTargets.size > 10_000) {
       entry.replyTargets.delete(entry.replyTargets.keys().next().value);
     }
     this.logger.info('whatsapp_reply_target_saved', {
       sessionId: entry.sessionId,
-      targetId,
-      source: 'inbound_chat',
+      phone,
+      phoneId: saved.phoneId,
+      chatId: saved.chatId,
+      lid: saved.lid,
     });
   }
 
   async #resolveSendTarget(entry, digits) {
-    const remembered = entry.replyTargets.get(digits);
-    if (remembered) {
-      return { targetId: remembered, source: 'inbound_chat' };
+    const remembered = normalizedReplyTarget(entry.replyTargets.get(digits));
+    let resolvedPhoneId = remembered.phoneId;
+    let resolvedLid = remembered.lid;
+
+    if (!resolvedPhoneId) {
+      try {
+        const numberLookupId = serializedId(await entry.client.getNumberId(digits));
+        if (isLidId(numberLookupId)) resolvedLid = numberLookupId;
+        else resolvedPhoneId = numberLookupId;
+      } catch (error) {
+        this.logger.warn('whatsapp_number_id_lookup_failed', {
+          sessionId: entry.sessionId,
+          phoneSuffix: digits.slice(-4),
+          error: error.message || String(error),
+        });
+      }
     }
 
-    const numberId = await entry.client.getNumberId(digits);
-    const phoneId = serializedId(numberId);
-    if (!phoneId) {
-      const error = new Error(`No WhatsApp user found for phone ending ${digits.slice(-4)}`);
+    if (resolvedPhoneId && typeof entry.client.getContactLidAndPhone === 'function') {
+      try {
+        const identities = await entry.client.getContactLidAndPhone([resolvedPhoneId]);
+        const identity = Array.isArray(identities) ? identities[0] : null;
+        const identityPhoneId = serializedId(identity?.pn);
+        if (isLidId(identityPhoneId)) resolvedLid = identityPhoneId;
+        else resolvedPhoneId = identityPhoneId || resolvedPhoneId;
+        resolvedLid = serializedId(identity?.lid) || resolvedLid;
+      } catch (error) {
+        this.logger.warn('whatsapp_lid_lookup_failed', {
+          sessionId: entry.sessionId,
+          phoneId: resolvedPhoneId,
+          error: error.message || String(error),
+        });
+      }
+    }
+
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (targetId, targetType) => {
+      if (!targetId || seen.has(targetId)) return;
+      seen.add(targetId);
+      candidates.push({ targetId, targetType });
+    };
+
+    if (!isLidId(remembered.chatId)) addCandidate(remembered.chatId, 'chatId');
+    if (!isLidId(remembered.fromId)) addCandidate(remembered.fromId, 'fromId');
+    if (!isLidId(remembered.phoneId)) addCandidate(remembered.phoneId, 'phoneId');
+    if (!isLidId(resolvedPhoneId)) addCandidate(resolvedPhoneId, 'phoneId');
+    addCandidate(remembered.lid, 'lid');
+    if (isLidId(remembered.fromId)) addCandidate(remembered.fromId, 'lid');
+    if (isLidId(remembered.chatId)) addCandidate(remembered.chatId, 'lid');
+    addCandidate(resolvedLid, 'lid');
+
+    if (!candidates.length) {
+      const error = new Error(`No WhatsApp target found for phone ending ${digits.slice(-4)}`);
       error.statusCode = 422;
       throw error;
     }
+    return { candidates };
+  }
 
-    if (typeof entry.client.getContactLidAndPhone === 'function') {
-      const identities = await entry.client.getContactLidAndPhone([phoneId]);
-      const identity = Array.isArray(identities) ? identities[0] : null;
-      const lid = serializedId(identity?.lid);
-      const resolvedPhoneId = serializedId(identity?.pn);
-      if (lid) return { targetId: lid, source: 'lid_lookup' };
-      if (resolvedPhoneId) return { targetId: resolvedPhoneId, source: 'phone_lookup' };
-    }
-
-    return { targetId: phoneId, source: 'number_lookup' };
+  #logMessageSent(entry, digits, finalTargetId, result) {
+    this.logger.info('whatsapp_message_sent', {
+      sessionId: entry.sessionId,
+      finalTargetId,
+      phoneSuffix: digits.slice(-4),
+      messageId: result?.id?._serialized || null,
+    });
   }
 
   #startReadyWatchdog(entry) {
