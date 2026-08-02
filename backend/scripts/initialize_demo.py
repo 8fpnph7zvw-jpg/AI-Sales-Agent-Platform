@@ -31,12 +31,13 @@ from app.models.rag.knowledge_document import KnowledgeDocument
 from app.models.workflow.workflow import Workflow
 from app.models.workflow.workflow_node import WorkflowNode
 from app.modules.knowledge.embedding import EmbeddingService
+from app.modules.user_management.repository import SALES_PERMISSIONS
 
 TENANT_NAME = "AI Sales Demo"
 TENANT_SLUG = "demo"
 ADMIN_EMAIL = "admin@test.com"
 DEFAULT_ADMIN_PASSWORD = "Admin@2026"
-OWNER_ROLE_CODE = "owner"
+ADMIN_ROLE_CODE = "admin"
 
 CUSTOMERS: tuple[dict[str, Any], ...] = (
     {
@@ -215,15 +216,15 @@ async def _upsert_tenant(session: AsyncSession) -> Tenant:
 async def _upsert_admin(session: AsyncSession, tenant: Tenant) -> User:
     role = await session.scalar(
         select(Role)
-        .where(Role.tenant_id == tenant.id, Role.code == OWNER_ROLE_CODE)
+        .where(Role.tenant_id == tenant.id, Role.code == ADMIN_ROLE_CODE)
         .with_for_update()
     )
     if role is None:
         role = Role(
             tenant_id=tenant.id,
-            code=OWNER_ROLE_CODE,
-            name="Owner",
-            description="Tenant owner with full access.",
+            code=ADMIN_ROLE_CODE,
+            name="Administrator",
+            description="Administrator with full tenant access.",
             is_system=True,
         )
         session.add(role)
@@ -244,10 +245,40 @@ async def _upsert_admin(session: AsyncSession, tenant: Tenant) -> User:
         for permission_id in permission_ids - assigned_ids
     )
 
+    sales_role = await session.scalar(
+        select(Role).where(Role.tenant_id == tenant.id, Role.code == "sales")
+    )
+    if sales_role is None:
+        sales_role = Role(
+            tenant_id=tenant.id,
+            code="sales",
+            name="Sales",
+            description="Sales users restricted to their own business data.",
+            is_system=True,
+        )
+        session.add(sales_role)
+        await session.flush()
+    sales_permission_ids = set(
+        (
+            await session.scalars(
+                select(Permission.id).where(Permission.code.in_(SALES_PERMISSIONS))
+            )
+        ).all()
+    )
+    assigned_sales_ids = set(
+        (
+            await session.scalars(
+                select(RolePermission.permission_id).where(RolePermission.role_id == sales_role.id)
+            )
+        ).all()
+    )
+    session.add_all(
+        RolePermission(role_id=sales_role.id, permission_id=permission_id)
+        for permission_id in sales_permission_ids - assigned_sales_ids
+    )
+
     user = await session.scalar(
-        select(User)
-        .where(User.tenant_id == tenant.id, User.email == ADMIN_EMAIL)
-        .with_for_update()
+        select(User).where(User.tenant_id == tenant.id, User.email == ADMIN_EMAIL).with_for_update()
     )
     if user is None:
         password = os.getenv("DEMO_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
@@ -316,6 +347,27 @@ async def _upsert_connectors(
 ) -> dict[str, Connector]:
     result: dict[str, Connector] = {}
     for values in CONNECTORS:
+        if values["provider"] == "whatsapp":
+            existing_whatsapp = await session.scalar(
+                select(Connector)
+                .where(
+                    Connector.tenant_id == tenant.id,
+                    Connector.provider == "whatsapp",
+                    Connector.deleted_at.is_(None),
+                )
+                .order_by(
+                    (Connector.external_account_id != "demo-template").desc(),
+                    (Connector.status == "active").desc(),
+                    Connector.id.desc(),
+                )
+                .limit(1)
+            )
+            if (
+                existing_whatsapp is not None
+                and existing_whatsapp.external_account_id != "demo-template"
+            ):
+                result["whatsapp"] = existing_whatsapp
+                continue
         connector = await session.scalar(
             select(Connector).where(
                 Connector.tenant_id == tenant.id,
@@ -496,9 +548,7 @@ async def _upsert_knowledge(session: AsyncSession, tenant: Tenant, admin: User) 
         }
 
 
-async def _upsert_products(
-    session: AsyncSession, tenant: Tenant
-) -> dict[str, Product]:
+async def _upsert_products(session: AsyncSession, tenant: Tenant) -> dict[str, Product]:
     result: dict[str, Product] = {}
     for values in PRODUCTS:
         product = await session.scalar(

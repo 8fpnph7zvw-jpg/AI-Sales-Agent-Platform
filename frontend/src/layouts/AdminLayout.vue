@@ -38,14 +38,14 @@ const menuItems: MenuItem[] = [
   { path: "/dashboard", label: "Dashboard", icon: DataAnalysis, permissions: ["dashboard.read"] },
   {
     path: "/customers",
-    label: "客户管理",
+    label: auth.canAny(["customer.read_all"]) ? "客户管理" : "我的客户",
     icon: User,
     permissions: ["customer.read_own", "customer.read_team", "customer.read_all"],
   },
   { path: "/agent", label: "AI客服", icon: MagicStick, permissions: ["ai_agent.chat"] },
   {
     path: "/conversations",
-    label: "聊天记录",
+    label: auth.canAny(["conversation.read_all"]) ? "聊天记录" : "我的聊天记录",
     icon: ChatDotRound,
     permissions: [
       "conversation.read_own",
@@ -53,16 +53,22 @@ const menuItems: MenuItem[] = [
       "conversation.read_all",
     ],
   },
-  { path: "/lead-score", label: "客户评分", icon: Operation, permissions: ["customer.score"] },
+  {
+    path: "/lead-score",
+    label: "客户评分结果",
+    icon: Operation,
+    permissions: ["customer.score_read", "customer.score"],
+  },
   { path: "/knowledge", label: "知识库", icon: Files, permissions: ["knowledge.read"] },
   {
     path: "/quotations",
-    label: "报价管理",
+    label: auth.canAny(["quotation.read_all"]) ? "报价管理" : "我的报价",
     icon: Document,
     permissions: ["quotation.read_own", "quotation.read_all", "quotation.create"],
   },
   { path: "/connectors", label: "Connector管理", icon: Connection, permissions: ["connector.read"] },
   { path: "/workflows", label: "Workflow管理", icon: MenuIcon, permissions: ["workflow.read"] },
+  { path: "/users", label: "用户管理", icon: User, permissions: ["user.read"] },
   {
     path: "/system",
     label: "系统设置",

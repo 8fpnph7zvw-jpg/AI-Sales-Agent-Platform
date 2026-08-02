@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     dify_api_base_url: str = "https://api.dify.ai/v1"
     dify_api_key: str = ""
     dify_timeout_seconds: float = 30.0
+    dify_scoring_api_base_url: str = "https://api.dify.ai/v1"
+    dify_scoring_api_key: str = ""
+    dify_scoring_timeout_seconds: float = 30.0
+    feishu_api_base_url: str = "https://open.feishu.cn"
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_timeout_seconds: float = 15.0
     whatsapp_graph_api_base_url: str = "https://graph.facebook.com"
     whatsapp_graph_api_version: str = "v23.0"
     whatsapp_timeout_seconds: float = 15.0

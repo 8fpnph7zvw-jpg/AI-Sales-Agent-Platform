@@ -20,7 +20,21 @@ class ConnectorRepository:
             )
             .order_by(Connector.created_at.desc(), Connector.id.desc())
         )
-        return list((await self.session.scalars(statement)).all())
+        connectors = list((await self.session.scalars(statement)).all())
+        whatsapp = [item for item in connectors if item.provider == "whatsapp"]
+        if len(whatsapp) <= 1:
+            return connectors
+        keeper = max(
+            whatsapp,
+            key=lambda item: (
+                item.external_account_id != "demo-template",
+                item.status == "active",
+                item.last_connected_at is not None,
+                item.last_connected_at,
+                item.id,
+            ),
+        )
+        return [item for item in connectors if item.provider != "whatsapp" or item.id == keeper.id]
 
     async def get_for_update(
         self,
@@ -43,9 +57,7 @@ class ConnectorRepository:
         connector_id: int,
         keys: set[str],
     ) -> dict[str, ConnectorConfig]:
-        statement = select(ConnectorConfig).where(
-            ConnectorConfig.connector_id == connector_id
-        )
+        statement = select(ConnectorConfig).where(ConnectorConfig.connector_id == connector_id)
         if keys:
             statement = statement.where(ConnectorConfig.config_key.in_(keys))
         configs = (await self.session.scalars(statement)).all()

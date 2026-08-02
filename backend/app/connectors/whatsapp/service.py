@@ -54,6 +54,7 @@ from app.schemas.protocol import (
     TextContent,
     UnifiedMessageEnvelope,
 )
+from app.services.lead_scoring_orchestrator import LeadScoringOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +75,14 @@ class WhatsAppService:
         settings: Settings,
         cipher: ConfigCipher,
         dify: DifyClient,
+        lead_scoring: LeadScoringOrchestrator | None = None,
     ) -> None:
         self.session = session
         self.repository = repository
         self.settings = settings
         self.cipher = cipher
         self.dify = dify
+        self.lead_scoring = lead_scoring
 
     async def config_status(
         self,
@@ -618,9 +621,7 @@ class WhatsAppService:
                 },
                 payload_redacted={
                     "from": self._redact_phone(envelope.sender.id),
-                    "message_type": envelope.context.attributes.get(
-                        "provider_message_type"
-                    ),
+                    "message_type": envelope.context.attributes.get("provider_message_type"),
                     "content_length": len(self._text(envelope)),
                 },
                 payload_hash=hashlib.sha256(raw_body).hexdigest(),
@@ -770,6 +771,7 @@ class WhatsAppService:
             dify_result,
         )
         await self._send_outbound(runtime, customer_session, outbound, webhook_log)
+        await self._score_customer_safely(customer)
         logger.info(
             "whatsapp_message_processed tenant_id=%s connector_id=%s event_id=%s",
             runtime.tenant.id,
@@ -787,15 +789,11 @@ class WhatsAppService:
             return
 
         if (webhook_log.headers_redacted or {}).get("provider_adapter") == "webjs_gateway":
-            session_id = str(
-                (webhook_log.headers_redacted or {}).get("gateway_session_id") or ""
-            )
+            session_id = str((webhook_log.headers_redacted or {}).get("gateway_session_id") or "")
             runtime = self._gateway_runtime(connector, tenant, session_id=session_id)
         else:
             runtime = await self._runtime(connector, tenant)
-        idempotency_key = (
-            f"whatsapp:inbound:{connector.public_id}:{webhook_log.provider_event_id}"
-        )
+        idempotency_key = f"whatsapp:inbound:{connector.public_id}:{webhook_log.provider_event_id}"
         message_context = await self.repository.get_message_context(
             tenant.id,
             idempotency_key,
@@ -881,6 +879,20 @@ class WhatsAppService:
         )
         await self._send_outbound(runtime, customer_session, outbound, webhook_log)
 
+        await self._score_customer_safely(customer)
+
+    async def _score_customer_safely(self, customer: Customer) -> None:
+        if self.lead_scoring is None or not self.lead_scoring.dify.configured:
+            return
+        try:
+            await self.lead_scoring.score_customer(customer)
+        except Exception:
+            logger.exception(
+                "whatsapp_lead_scoring_failed tenant_id=%s customer_id=%s",
+                customer.tenant_id,
+                customer.public_id,
+            )
+
     async def _create_inbound_context(
         self,
         runtime: WhatsAppRuntime,
@@ -950,6 +962,7 @@ class WhatsAppService:
                 subject=f"WhatsApp - {customer.name}",
                 status="open",
                 mode="ai",
+                assigned_user_id=customer.owner_user_id,
                 ai_enabled=True,
                 last_message_at=envelope.occurred_at,
             )
@@ -968,9 +981,7 @@ class WhatsAppService:
             message_type="text",
             content_text=self._text(envelope),
             content_json={
-                "provider_message_type": envelope.context.attributes.get(
-                    "provider_message_type"
-                ),
+                "provider_message_type": envelope.context.attributes.get("provider_message_type"),
                 "provider_content": envelope.context.attributes.get("provider_content"),
             },
             external_message_id=envelope.external_message_id,

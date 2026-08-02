@@ -27,6 +27,10 @@ from app.core.encryption import ConfigCipher
 from app.core.exceptions import AppError
 from app.db.session import get_db
 from app.integrations.dify.client import DifyClient
+from app.modules.lead_score.repository import LeadScoreRepository
+from app.services.dify_scoring_service import DifyScoringService
+from app.services.feishu_service import FeishuService
+from app.services.lead_scoring_orchestrator import LeadScoringOrchestrator
 
 webhook_router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"])
 management_router = APIRouter(prefix="/connectors/whatsapp", tags=["WhatsApp Connector"])
@@ -44,6 +48,12 @@ def get_whatsapp_service(
         settings,
         ConfigCipher(settings),
         DifyClient(settings),
+        LeadScoringOrchestrator(
+            session,
+            LeadScoreRepository(session),
+            DifyScoringService(settings),
+            FeishuService(settings),
+        ),
     )
 
 

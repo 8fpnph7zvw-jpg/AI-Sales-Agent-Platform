@@ -6,6 +6,7 @@ from app.models.auth.auth_session import AuthSession
 from app.models.auth.permission import Permission
 from app.models.auth.role import Role
 from app.models.auth.role_permission import RolePermission
+from app.models.auth.sales_profile import SalesProfile
 from app.models.auth.tenant import Tenant
 from app.models.auth.user import User
 from app.models.auth.user_role import UserRole
@@ -16,6 +17,7 @@ from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
+from app.models.customer.customer_score import CustomerScore
 from app.models.customer.customer_session import CustomerSession
 from app.models.notification.notification import Notification
 from app.models.quotation.product import Product
@@ -40,6 +42,7 @@ __all__ = [
     "ConnectorConfig",
     "Conversation",
     "Customer",
+    "CustomerScore",
     "CustomerSession",
     "Embedding",
     "KnowledgeChunk",
@@ -56,6 +59,7 @@ __all__ = [
     "QuotationItem",
     "Role",
     "RolePermission",
+    "SalesProfile",
     "SystemConfig",
     "Tenant",
     "User",

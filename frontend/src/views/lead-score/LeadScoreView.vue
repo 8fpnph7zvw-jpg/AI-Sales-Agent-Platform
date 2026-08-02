@@ -1,96 +1,96 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
-
 import { getApiErrorMessage } from "@/api/client";
 import { getCustomers } from "@/api/customers";
-import { calculateLeadScore, type ScoreSignals } from "@/api/lead-score";
+import { getLeadScores, runLeadScoringWorkflow } from "@/api/lead-score";
+import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
-import type { Customer, LeadScoreResult } from "@/types/business";
+import { useAuthStore } from "@/stores/auth";
+import type { Customer, CustomerScore } from "@/types/business";
+import { formatDateTime } from "@/utils/format";
 
+const auth = useAuthStore();
+const loading = ref(false);
+const running = ref(false);
+const error = ref("");
+const rows = ref<CustomerScore[]>([]);
 const customers = ref<Customer[]>([]);
-const customerId = ref("");
-const calculating = ref(false);
-const result = ref<LeadScoreResult | null>(null);
-const signals = reactive<ScoreSignals>({
-  need_clarity: 50,
-  budget_match: 50,
-  urgency: 50,
-  engagement: 50,
-  profile_fit: 50,
-});
-const signalLabels: Array<{ key: keyof ScoreSignals; label: string; help: string }> = [
-  { key: "need_clarity", label: "需求明确度", help: "产品、规格、数量是否清晰" },
-  { key: "budget_match", label: "预算匹配度", help: "预算与产品定价的匹配程度" },
-  { key: "urgency", label: "采购紧迫度", help: "期望采购和交付时间" },
-  { key: "engagement", label: "互动参与度", help: "回复频率与沟通深度" },
-  { key: "profile_fit", label: "客户画像匹配", help: "地区、行业与目标客户画像" },
-];
+const total = ref(0);
+const form = reactive({ customer_id: "", product_requirement: "", quantity: "" });
 
-async function loadCustomers(): Promise<void> {
+async function load(): Promise<void> {
+  loading.value = true;
+  error.value = "";
   try {
-    const page = await getCustomers({ limit: 100, offset: 0 });
-    customers.value = page.data;
-  } catch (error) {
-    ElMessage.error(getApiErrorMessage(error));
+    const [scores, customerPage] = await Promise.all([
+      getLeadScores({ limit: 100, offset: 0 }),
+      getCustomers({ limit: 100, offset: 0 }),
+    ]);
+    rows.value = scores.data;
+    total.value = scores.total;
+    customers.value = customerPage.data;
+  } catch (requestError) {
+    error.value = getApiErrorMessage(requestError);
+  } finally {
+    loading.value = false;
   }
 }
 
-async function calculate(): Promise<void> {
-  if (!customerId.value) {
-    ElMessage.warning("请先选择客户");
+async function runWorkflow(): Promise<void> {
+  if (!form.customer_id) {
+    ElMessage.warning("请选择客户");
     return;
   }
-  calculating.value = true;
+  running.value = true;
   try {
-    result.value = await calculateLeadScore(customerId.value, { ...signals });
-    ElMessage.success("客户评分已更新");
-  } catch (error) {
-    ElMessage.error(getApiErrorMessage(error));
+    await runLeadScoringWorkflow({ ...form });
+    ElMessage.success("Dify 评分 Workflow 已完成");
+    await load();
+  } catch (requestError) {
+    ElMessage.error(getApiErrorMessage(requestError));
   } finally {
-    calculating.value = false;
+    running.value = false;
   }
 }
 
-onMounted(loadCustomers);
+onMounted(load);
 </script>
 
 <template>
   <div>
-    <PageHeader title="客户评分" description="基于明确业务信号计算客户购买意向" />
-    <div class="score-layout">
-      <el-card shadow="never" class="content-card">
-        <el-form label-position="top">
-          <el-form-item label="选择客户">
-            <el-select v-model="customerId" filterable placeholder="搜索客户" class="full-width">
-              <el-option
-                v-for="customer in customers"
-                :key="customer.id"
-                :label="`${customer.name}${customer.company_name ? ` · ${customer.company_name}` : ''}`"
-                :value="customer.id"
-              />
-            </el-select>
-          </el-form-item>
-          <div v-for="signal in signalLabels" :key="signal.key" class="score-signal">
-            <div><strong>{{ signal.label }}</strong><span>{{ signal.help }}</span></div>
-            <el-slider v-model="signals[signal.key]" :step="5" show-input />
-          </div>
-          <el-button type="primary" :loading="calculating" @click="calculate">计算并保存评分</el-button>
-        </el-form>
-      </el-card>
-      <el-card shadow="never" class="content-card score-result-card">
-        <template v-if="result">
-          <div class="score-ring"><strong>{{ result.score }}</strong><span>/ 100</span></div>
-          <el-tag size="large" effect="dark">{{ result.level }}</el-tag>
-          <p>评分模型：{{ result.scoring_version }}</p>
-          <div class="score-breakdown">
-            <div v-for="(value, key) in result.components" :key="key">
-              <span>{{ key }}</span><strong>{{ value }}</strong>
-            </div>
-          </div>
-        </template>
-        <el-empty v-else description="完成左侧信号评估后查看评分结果" />
-      </el-card>
-    </div>
+    <PageHeader title="客户评分结果" description="Dify Lead Scoring Workflow 的历史评分记录" />
+    <el-card v-if="auth.canAny(['customer.score'])" shadow="never" class="content-card">
+      <template #header><strong>手动触发评分（管理员）</strong></template>
+      <el-form :model="form" label-position="top" class="filter-bar">
+        <el-form-item label="客户">
+          <el-select v-model="form.customer_id" filterable placeholder="选择客户">
+            <el-option v-for="customer in customers" :key="customer.id" :label="customer.name" :value="customer.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="产品需求"><el-input v-model="form.product_requirement" /></el-form-item>
+        <el-form-item label="数量"><el-input v-model="form.quantity" /></el-form-item>
+        <el-button type="primary" :loading="running" @click="runWorkflow">运行评分 Workflow</el-button>
+      </el-form>
+    </el-card>
+    <el-card shadow="never" class="content-card">
+      <template #header><strong>评分记录（{{ total }}）</strong></template>
+      <ApiState :loading="loading" :error="error" :empty="!rows.length" empty-text="暂无评分记录" @retry="load">
+        <el-table :data="rows" stripe>
+          <el-table-column prop="customer_name" label="客户" min-width="180" />
+          <el-table-column prop="score" label="评分" width="90" />
+          <el-table-column prop="level" label="等级" width="90" />
+          <el-table-column label="需要跟进" width="110">
+            <template #default="{ row }: { row: CustomerScore }">
+              <el-tag :type="row.need_follow ? 'danger' : 'info'">{{ row.need_follow ? "是" : "否" }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="reason" label="原因" min-width="300" show-overflow-tooltip />
+          <el-table-column label="评分时间" width="180">
+            <template #default="{ row }: { row: CustomerScore }">{{ formatDateTime(row.created_time) }}</template>
+          </el-table-column>
+        </el-table>
+      </ApiState>
+    </el-card>
   </div>
 </template>

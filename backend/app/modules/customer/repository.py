@@ -3,6 +3,9 @@ from __future__ import annotations
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.auth.role import Role
+from app.models.auth.user import User
+from app.models.auth.user_role import UserRole
 from app.models.customer.customer import Customer
 
 
@@ -69,3 +72,17 @@ class CustomerRepository:
 
     def add(self, customer: Customer) -> None:
         self.session.add(customer)
+
+    async def get_sales_user(self, tenant_id: int, public_id: str) -> User | None:
+        return await self.session.scalar(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.public_id == public_id,
+                User.status == "active",
+                User.deleted_at.is_(None),
+                Role.code == "sales",
+            )
+        )

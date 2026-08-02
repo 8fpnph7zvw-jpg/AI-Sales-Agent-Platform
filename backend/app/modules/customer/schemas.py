@@ -60,3 +60,7 @@ class CustomerListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class CustomerOwnerUpdate(BaseModel):
+    owner_id: str | None = Field(default=None, min_length=26, max_length=26)

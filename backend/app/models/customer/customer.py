@@ -79,3 +79,9 @@ class Customer(
     owner = relationship("User", foreign_keys=[owner_user_id], lazy="raise")
     sessions = relationship("CustomerSession", back_populates="customer", lazy="raise")
     conversations = relationship("Conversation", back_populates="customer", lazy="raise")
+    scores = relationship(
+        "CustomerScore",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+        lazy="raise",
+    )

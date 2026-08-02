@@ -34,3 +34,13 @@ export async function updateCustomer(
 export async function deleteCustomer(customerId: string): Promise<void> {
   await apiClient.delete(`/customers/${customerId}`);
 }
+
+export async function assignCustomerOwner(
+  customerId: string,
+  ownerId: string | null,
+): Promise<Customer> {
+  const { data } = await apiClient.patch<Customer>(`/customers/${customerId}/owner`, {
+    owner_id: ownerId,
+  });
+  return data;
+}

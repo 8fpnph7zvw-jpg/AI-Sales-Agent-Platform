@@ -43,9 +43,7 @@ class QuotationService:
         offset: int,
         status: str | None,
     ) -> QuotationListResponse:
-        created_by = (
-            None if "quotation.read_all" in principal.permissions else principal.user_id
-        )
+        created_by = None if "quotation.read_all" in principal.permissions else principal.user_id
         rows, total = await self.repository.list_quotations(
             principal.tenant_id,
             limit=limit,
@@ -121,6 +119,11 @@ class QuotationService:
             payload.customer_id,
         )
         if customer is None:
+            raise ResourceNotFoundError("Customer")
+        if (
+            "customer.read_all" not in principal.permissions
+            and customer.owner_user_id != principal.user_id
+        ):
             raise ResourceNotFoundError("Customer")
 
         conversation = None

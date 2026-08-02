@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -22,3 +24,27 @@ class LeadScoreResponse(BaseModel):
     level: str
     components: dict[str, float]
     scoring_version: str
+
+
+class WorkflowScoreRequest(BaseModel):
+    customer_id: str = Field(min_length=26, max_length=26)
+    product_requirement: str | None = Field(default=None, max_length=2000)
+    quantity: str | None = Field(default=None, max_length=120)
+
+
+class CustomerScoreRead(BaseModel):
+    id: int
+    customer_id: str
+    customer_name: str
+    score: int
+    level: str
+    need_follow: bool
+    reason: str
+    created_time: datetime
+
+
+class CustomerScoreListResponse(BaseModel):
+    data: list[CustomerScoreRead]
+    total: int
+    limit: int
+    offset: int

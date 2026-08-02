@@ -17,6 +17,7 @@ VALUES
     ('customer.assign', 'customer', 'assign', 'Assign customer ownership'),
     ('customer.delete', 'customer', 'delete', 'Delete or anonymize customers'),
     ('customer.score', 'customer', 'score', 'Recalculate customer intent'),
+    ('customer.score_read', 'customer', 'score_read', 'View customer scoring results'),
     ('conversation.read_own', 'conversation', 'read_own', 'Read assigned conversations'),
     ('conversation.read_team', 'conversation', 'read_team', 'Read team conversations'),
     ('conversation.read_all', 'conversation', 'read_all', 'Read all tenant conversations'),

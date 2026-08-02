@@ -48,6 +48,7 @@ class ConversationService:
         customer = await self.repository.get_customer(
             principal.tenant_id,
             payload.customer_id,
+            None if "customer.read_all" in principal.permissions else principal.user_id,
         )
         if customer is None:
             raise ResourceNotFoundError("Customer")
@@ -116,7 +117,7 @@ class ConversationService:
         status: str | None,
         search: str | None,
     ) -> ConversationListResponse:
-        assigned_user_id = (
+        owner_user_id = (
             None
             if principal.permissions.intersection(
                 {"conversation.read_all", "conversation.read_team"}
@@ -129,7 +130,7 @@ class ConversationService:
             offset=offset,
             status=status,
             search=search,
-            assigned_user_id=assigned_user_id,
+            assigned_user_id=owner_user_id,
         )
         return ConversationListResponse(
             data=[
@@ -165,14 +166,18 @@ class ConversationService:
             conversation_id,
             limit=limit,
             before_sequence=before_sequence,
+            owner_user_id=(
+                None
+                if principal.permissions.intersection(
+                    {"conversation.read_all", "conversation.read_team"}
+                )
+                else principal.user_id
+            ),
         )
         if total < 0:
             raise ResourceNotFoundError("Conversation")
         return ConversationMessageListResponse(
-            data=[
-                self._response(message, conversation_id)
-                for message in messages
-            ],
+            data=[self._response(message, conversation_id) for message in messages],
             total=total,
             limit=limit,
             offset=0,
@@ -183,7 +188,7 @@ class ConversationService:
         principal: Principal,
         conversation_id: str,
     ) -> ConversationDeleteResponse:
-        assigned_user_id = (
+        owner_user_id = (
             None
             if principal.permissions.intersection(
                 {"conversation.read_all", "conversation.read_team"}
@@ -194,7 +199,7 @@ class ConversationService:
             principal.tenant_id,
             conversation_id,
             for_update=True,
-            assigned_user_id=assigned_user_id,
+            assigned_user_id=owner_user_id,
         )
         if conversation is None:
             raise ResourceNotFoundError("Conversation")
@@ -211,6 +216,7 @@ class ConversationService:
         conversation = await self.repository.get_by_public_id_for_update(
             principal.tenant_id,
             payload.conversation_id,
+            None if "conversation.read_all" in principal.permissions else principal.user_id,
         )
         if conversation is None:
             raise ResourceNotFoundError("Conversation")
@@ -290,9 +296,7 @@ class ConversationService:
             values = {
                 config.config_key: self.cipher.decrypt(
                     config.value_encrypted,
-                    associated_data=(
-                        f"{connector.tenant_id}:{connector.id}:{config.config_key}"
-                    ),
+                    associated_data=(f"{connector.tenant_id}:{connector.id}:{config.config_key}"),
                 )
                 for config in configs
                 if config.value_encrypted is not None
@@ -312,9 +316,7 @@ class ConversationService:
                 direction=Direction.OUTBOUND,
                 message_type=MessageType.TEXT,
                 conversation_id=conversation.public_id,
-                sender=Party(
-                    id=str(values.get("phone_number_id") or connector.public_id)
-                ),
+                sender=Party(id=str(values.get("phone_number_id") or connector.public_id)),
                 recipients=[Party(id=customer_session.external_contact_id)],
                 content=TextContent(text=payload.content),
             )

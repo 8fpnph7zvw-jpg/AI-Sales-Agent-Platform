@@ -80,6 +80,23 @@ CREATE TABLE roles (
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE sales_profiles (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    sales_name VARCHAR(120) NOT NULL,
+    feishu_open_id VARCHAR(128) NULL,
+    created_time DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT pk_sales_profiles PRIMARY KEY (id),
+    CONSTRAINT user_id UNIQUE (user_id),
+    CONSTRAINT tenant_feishu_open_id UNIQUE (tenant_id, feishu_open_id),
+    CONSTRAINT fk_sales_profiles_tenant_id_tenants
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+    CONSTRAINT fk_sales_profiles_user_id_users
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    INDEX ix_sales_profiles_tenant_name (tenant_id, sales_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE user_roles (
     user_id BIGINT UNSIGNED NOT NULL,
     role_id BIGINT UNSIGNED NOT NULL,
@@ -174,6 +191,26 @@ CREATE TABLE customers (
     INDEX ix_customers_tenant_score (tenant_id, intent_score),
     INDEX ix_customers_tenant_email (tenant_id, email),
     INDEX ix_customers_tenant_phone (tenant_id, phone_e164)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE customer_scores (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    customer_id BIGINT UNSIGNED NOT NULL,
+    score TINYINT UNSIGNED NOT NULL,
+    level VARCHAR(1) NOT NULL,
+    need_follow BOOLEAN NOT NULL,
+    reason TEXT NOT NULL,
+    created_time DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT pk_customer_scores PRIMARY KEY (id),
+    CONSTRAINT ck_customer_scores_score_range CHECK (score >= 0 AND score <= 100),
+    CONSTRAINT ck_customer_scores_level_allowed CHECK (level IN ('A', 'B', 'C', 'D')),
+    CONSTRAINT fk_customer_scores_tenant_id_tenants
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+    CONSTRAINT fk_customer_scores_customer_id_customers
+        FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
+    INDEX ix_customer_scores_customer_created (customer_id, created_time),
+    INDEX ix_customer_scores_tenant_follow (tenant_id, need_follow, created_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE connectors (

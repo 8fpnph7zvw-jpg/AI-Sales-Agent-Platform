@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.auth import Principal, require_any_permission
 from app.db.session import get_db
 from app.modules.customer.repository import CustomerRepository
-from app.modules.customer.schemas import CustomerCreate, CustomerListResponse, CustomerRead
+from app.modules.customer.schemas import (
+    CustomerCreate,
+    CustomerListResponse,
+    CustomerOwnerUpdate,
+    CustomerRead,
+)
 from app.modules.customer.service import CustomerService
 
 router = APIRouter(prefix="/customers", tags=["Customers"])
@@ -61,4 +66,15 @@ async def create_customer(
     ],
 ) -> CustomerRead:
     customer = await service.create_customer(principal, payload)
+    return CustomerRead.model_validate(customer)
+
+
+@router.patch("/{customer_id}/owner", response_model=CustomerRead)
+async def assign_customer_owner(
+    customer_id: str,
+    payload: CustomerOwnerUpdate,
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    principal: Annotated[Principal, Depends(require_any_permission("customer.assign"))],
+) -> CustomerRead:
+    customer = await service.assign_owner(principal, customer_id, payload)
     return CustomerRead.model_validate(customer)

@@ -14,10 +14,12 @@ from app.modules.knowledge.router import router as knowledge_router
 from app.modules.lead_score.router import router as lead_score_router
 from app.modules.notification.router import router as notification_router
 from app.modules.quotation.router import router as quotation_router
+from app.modules.user_management.router import router as user_management_router
 from app.modules.workflow.router import router as workflow_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
+api_router.include_router(user_management_router)
 api_router.include_router(customer_router)
 api_router.include_router(conversation_router)
 api_router.include_router(conversation_management_router)

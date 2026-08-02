@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.auth import Principal
 from app.core.exceptions import ResourceNotFoundError
 from app.modules.lead_score.repository import LeadScoreRepository
-from app.modules.lead_score.schemas import LeadScoreRequest, LeadScoreResponse
+from app.modules.lead_score.schemas import (
+    CustomerScoreListResponse,
+    CustomerScoreRead,
+    LeadScoreRequest,
+    LeadScoreResponse,
+)
 
 SCORING_VERSION = "rules-v1"
 WEIGHTS = {
@@ -39,6 +44,11 @@ class LeadScoreService:
         )
         if customer is None:
             raise ResourceNotFoundError("Customer")
+        if (
+            "customer.read_all" not in principal.permissions
+            and customer.owner_user_id != principal.user_id
+        ):
+            raise ResourceNotFoundError("Customer")
 
         components = payload.signals.model_dump()
         score = round(
@@ -60,6 +70,42 @@ class LeadScoreService:
             level=level,
             components=components,
             scoring_version=SCORING_VERSION,
+        )
+
+    async def list_scores(
+        self,
+        principal: Principal,
+        *,
+        customer_id: str | None,
+        limit: int,
+        offset: int,
+    ) -> CustomerScoreListResponse:
+        rows, total = await self.repository.list_scores(
+            principal.tenant_id,
+            owner_user_id=(
+                None if "customer.read_all" in principal.permissions else principal.user_id
+            ),
+            customer_public_id=customer_id,
+            limit=limit,
+            offset=offset,
+        )
+        return CustomerScoreListResponse(
+            data=[
+                CustomerScoreRead(
+                    id=score.id,
+                    customer_id=customer.public_id,
+                    customer_name=customer.name,
+                    score=score.score,
+                    level=score.level,
+                    need_follow=score.need_follow,
+                    reason=score.reason,
+                    created_time=score.created_time,
+                )
+                for score, customer in rows
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
         )
 
     @staticmethod

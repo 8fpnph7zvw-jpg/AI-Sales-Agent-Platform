@@ -37,6 +37,34 @@ export interface CustomerCreate {
   lifecycle_stage?: string;
 }
 
+export interface SalesUser {
+  id: string;
+  internal_id: number;
+  email: string;
+  display_name: string;
+  status: string;
+  role: "admin" | "sales";
+  sales_name: string | null;
+  feishu_open_id: string | null;
+  created_at: string;
+}
+
+export interface SalesUserCreate {
+  email: string;
+  password: string;
+  display_name: string;
+  sales_name: string;
+  feishu_open_id?: string;
+}
+
+export interface SalesUserUpdate {
+  display_name?: string;
+  password?: string;
+  status?: "active" | "locked" | "disabled";
+  sales_name?: string;
+  feishu_open_id?: string;
+}
+
 export interface CustomerUpdate {
   lifecycle_stage?: string;
   tags?: string[];
@@ -146,6 +174,19 @@ export interface Quotation {
   items?: Array<QuotationItemInput & { line_total: string }>;
   created_at: string;
 }
+
+export interface CustomerScore {
+  id: number;
+  customer_id: string;
+  customer_name: string;
+  score: number;
+  level: "A" | "B" | "C" | "D";
+  need_follow: boolean;
+  reason: string;
+  created_time: string;
+}
+
+export type CustomerScorePage = PageResult<CustomerScore>;
 
 export interface Product {
   id: string;

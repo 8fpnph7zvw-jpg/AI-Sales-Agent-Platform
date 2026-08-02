@@ -21,15 +21,19 @@ class ConversationRepository:
         self,
         tenant_id: int,
         public_id: str,
+        assigned_user_id: int | None = None,
     ) -> Conversation | None:
         statement = (
             select(Conversation)
+            .join(Customer, Customer.id == Conversation.customer_id)
             .where(
                 Conversation.tenant_id == tenant_id,
                 Conversation.public_id == public_id,
             )
-            .with_for_update()
         )
+        if assigned_user_id is not None:
+            statement = statement.where(Customer.owner_user_id == assigned_user_id)
+        statement = statement.with_for_update()
         return await self.session.scalar(statement)
 
     async def get_by_id_or_public_id(
@@ -45,12 +49,16 @@ class ConversationRepository:
             if identifier.isdecimal()
             else Conversation.public_id == identifier
         )
-        statement = select(Conversation).where(
-            Conversation.tenant_id == tenant_id,
-            identifier_filter,
+        statement = (
+            select(Conversation)
+            .join(Customer, Customer.id == Conversation.customer_id)
+            .where(
+                Conversation.tenant_id == tenant_id,
+                identifier_filter,
+            )
         )
         if assigned_user_id is not None:
-            statement = statement.where(Conversation.assigned_user_id == assigned_user_id)
+            statement = statement.where(Customer.owner_user_id == assigned_user_id)
         if for_update:
             statement = statement.with_for_update()
         return await self.session.scalar(statement)
@@ -65,14 +73,17 @@ class ConversationRepository:
             )
         )
 
-    async def get_customer(self, tenant_id: int, public_id: str) -> Customer | None:
-        return await self.session.scalar(
-            select(Customer).where(
-                Customer.tenant_id == tenant_id,
-                Customer.public_id == public_id,
-                Customer.deleted_at.is_(None),
-            )
+    async def get_customer(
+        self, tenant_id: int, public_id: str, owner_user_id: int | None = None
+    ) -> Customer | None:
+        statement = select(Customer).where(
+            Customer.tenant_id == tenant_id,
+            Customer.public_id == public_id,
+            Customer.deleted_at.is_(None),
         )
+        if owner_user_id is not None:
+            statement = statement.where(Customer.owner_user_id == owner_user_id)
+        return await self.session.scalar(statement)
 
     async def get_demo_connector(self, tenant_id: int) -> Connector | None:
         statement = (
@@ -122,7 +133,7 @@ class ConversationRepository:
         if status:
             filters.append(Conversation.status == status)
         if assigned_user_id is not None:
-            filters.append(Conversation.assigned_user_id == assigned_user_id)
+            filters.append(Customer.owner_user_id == assigned_user_id)
         if search:
             pattern = f"%{search.strip()}%"
             filters.append(
@@ -170,13 +181,19 @@ class ConversationRepository:
         *,
         limit: int,
         before_sequence: int | None,
+        owner_user_id: int | None = None,
     ) -> tuple[list[Message], int]:
-        conversation_id = await self.session.scalar(
-            select(Conversation.id).where(
+        statement = (
+            select(Conversation.id)
+            .join(Customer)
+            .where(
                 Conversation.tenant_id == tenant_id,
                 Conversation.public_id == conversation_public_id,
             )
         )
+        if owner_user_id is not None:
+            statement = statement.where(Customer.owner_user_id == owner_user_id)
+        conversation_id = await self.session.scalar(statement)
         if conversation_id is None:
             return [], -1
         filters = [Message.conversation_id == conversation_id]
@@ -185,10 +202,7 @@ class ConversationRepository:
         rows = list(
             (
                 await self.session.scalars(
-                    select(Message)
-                    .where(*filters)
-                    .order_by(Message.sequence_no)
-                    .limit(limit)
+                    select(Message).where(*filters).order_by(Message.sequence_no).limit(limit)
                 )
             ).all()
         )

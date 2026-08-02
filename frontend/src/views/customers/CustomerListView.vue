@@ -4,7 +4,8 @@ import { Delete, Edit, Plus, Search } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 import { getApiErrorMessage } from "@/api/client";
-import { deleteCustomer, getCustomers, updateCustomer } from "@/api/customers";
+import { assignCustomerOwner, deleteCustomer, getCustomers, updateCustomer } from "@/api/customers";
+import { getUsers } from "@/api/users";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import CustomerFormDialog from "@/components/customers/CustomerFormDialog.vue";
@@ -16,10 +17,12 @@ import {
   withCustomerCategory,
   type CustomerCategory,
 } from "@/constants/customers";
-import type { Customer } from "@/types/business";
+import { useAuthStore } from "@/stores/auth";
+import type { Customer, SalesUser } from "@/types/business";
 import { formatDateTime } from "@/utils/format";
 
 const loading = ref(false);
+const auth = useAuthStore();
 const error = ref("");
 const rows = ref<Customer[]>([]);
 const total = ref(0);
@@ -27,6 +30,11 @@ const createVisible = ref(false);
 const editVisible = ref(false);
 const editing = ref<Customer | null>(null);
 const savingCategory = ref(false);
+const assigning = ref(false);
+const ownerVisible = ref(false);
+const ownerCustomer = ref<Customer | null>(null);
+const selectedOwnerId = ref<string | null>(null);
+const salesUsers = ref<SalesUser[]>([]);
 const deletingId = ref("");
 const editForm = reactive<{ lifecycle_stage: CustomerCategory }>({ lifecycle_stage: "lead" });
 const query = reactive({
@@ -65,6 +73,39 @@ function intentTagType(level: string | null): "danger" | "warning" | "success" |
   if (level === "warm" || level === "medium") return "warning";
   if (level === "low") return "info";
   return "success";
+}
+
+async function loadSalesUsers(): Promise<void> {
+  if (!auth.canAny(["customer.assign"])) return;
+  salesUsers.value = (await getUsers()).data.filter((user) => user.role === "sales");
+}
+
+function ownerName(ownerUserId: number | null): string {
+  return salesUsers.value.find((user) => user.internal_id === ownerUserId)?.sales_name || "未分配";
+}
+
+function openOwnerEditor(row: Customer): void {
+  ownerCustomer.value = row;
+  selectedOwnerId.value = salesUsers.value.find(
+    (user) => user.internal_id === row.owner_user_id,
+  )?.id || null;
+  ownerVisible.value = true;
+}
+
+async function saveOwner(): Promise<void> {
+  if (!ownerCustomer.value) return;
+  assigning.value = true;
+  try {
+    const updated = await assignCustomerOwner(ownerCustomer.value.id, selectedOwnerId.value);
+    const index = rows.value.findIndex((item) => item.id === updated.id);
+    if (index >= 0) rows.value[index] = updated;
+    ownerVisible.value = false;
+    ElMessage.success("客户负责人已更新");
+  } catch (requestError) {
+    ElMessage.error(getApiErrorMessage(requestError));
+  } finally {
+    assigning.value = false;
+  }
 }
 
 function openCategoryEditor(row: Customer): void {
@@ -115,7 +156,9 @@ async function removeCustomer(row: Customer): Promise<void> {
   }
 }
 
-onMounted(load);
+onMounted(async () => {
+  await Promise.all([load(), loadSalesUsers()]);
+});
 </script>
 
 <template>
@@ -170,6 +213,9 @@ onMounted(load);
           <el-table-column prop="country_code" label="国家/地区" width="110">
             <template #default="{ row }: { row: Customer }">{{ row.country_code || "—" }}</template>
           </el-table-column>
+          <el-table-column v-if="auth.canAny(['customer.assign'])" label="负责人" width="140">
+            <template #default="{ row }: { row: Customer }">{{ ownerName(row.owner_user_id) }}</template>
+          </el-table-column>
           <el-table-column label="意向" width="130">
             <template #default="{ row }: { row: Customer }">
               <el-tag :type="intentTagType(row.intent_level)" effect="light">
@@ -198,7 +244,7 @@ onMounted(load);
           <el-table-column label="更新时间" width="180">
             <template #default="{ row }: { row: Customer }">{{ formatDateTime(row.updated_at) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="160" fixed="right">
+          <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }: { row: Customer }">
               <el-button
                 v-permission="['customer.update_own', 'customer.update_all']"
@@ -215,6 +261,12 @@ onMounted(load);
                 :loading="deletingId === row.id"
                 @click="removeCustomer(row)"
               >删除</el-button>
+              <el-button
+                v-permission="'customer.assign'"
+                text
+                type="primary"
+                @click="openOwnerEditor(row)"
+              >分配</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -253,6 +305,26 @@ onMounted(load);
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="savingCategory" @click="saveCategory">保存分类</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="ownerVisible" title="分配客户负责人" width="460px">
+      <el-form label-position="top">
+        <el-form-item label="客户"><strong>{{ ownerCustomer?.name }}</strong></el-form-item>
+        <el-form-item label="销售负责人">
+          <el-select v-model="selectedOwnerId" clearable class="full-width" placeholder="选择销售">
+            <el-option
+              v-for="user in salesUsers"
+              :key="user.id"
+              :label="user.sales_name || user.display_name"
+              :value="user.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="ownerVisible = false">取消</el-button>
+        <el-button type="primary" :loading="assigning" @click="saveOwner">保存</el-button>
       </template>
     </el-dialog>
   </div>

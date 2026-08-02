@@ -56,7 +56,7 @@ const routes: RouteRecordRaw[] = [
         path: "lead-score",
         name: "lead-score",
         component: () => import("@/views/lead-score/LeadScoreView.vue"),
-        meta: { title: "客户评分", permissions: ["customer.score"] },
+        meta: { title: "客户评分", permissions: ["customer.score_read", "customer.score"] },
       },
       {
         path: "knowledge",
@@ -90,6 +90,12 @@ const routes: RouteRecordRaw[] = [
         name: "workflows",
         component: () => import("@/views/workflows/WorkflowView.vue"),
         meta: { title: "Workflow管理", permissions: ["workflow.read"] },
+      },
+      {
+        path: "users",
+        name: "users",
+        component: () => import("@/views/users/UserManagementView.vue"),
+        meta: { title: "用户管理", permissions: ["user.read"] },
       },
       {
         path: "system",

@@ -63,3 +63,10 @@ class User(
         foreign_keys="UserRole.user_id",
         lazy="raise",
     )
+    sales_profile = relationship(
+        "SalesProfile",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="raise",
+    )

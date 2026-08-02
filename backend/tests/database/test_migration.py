@@ -21,7 +21,7 @@ def _load_revision():
 def test_alembic_has_one_linear_head() -> None:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["20260730_0007"]
+    assert scripts.get_heads() == ["20260802_0008"]
     assert scripts.get_base() == "20260724_0001"
 
 
@@ -33,6 +33,6 @@ def test_baseline_sql_files_exist_and_split_into_statements() -> None:
     schema_statements = list(revision._statements(schema))
     permission_statements = list(revision._statements(permissions))
 
-    assert len([item for item in schema_statements if item.startswith("CREATE TABLE")]) == 31
+    assert len([item for item in schema_statements if item.startswith("CREATE TABLE")]) == 33
     assert len(permission_statements) == 1
     assert permission_statements[0].startswith("INSERT INTO permissions")
