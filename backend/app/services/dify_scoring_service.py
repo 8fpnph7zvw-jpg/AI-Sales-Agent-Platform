@@ -16,9 +16,21 @@ logger = logging.getLogger(__name__)
 
 class DifyScoreOutput(BaseModel):
     score: int = Field(ge=0, le=100)
-    level: str = Field(pattern="^[ABCD]$")
+    level: str = Field(default="", pattern="^[ABC]$")
     need_follow: bool
     reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def calculate_level_from_score(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "score" in values:
+            normalized = dict(values)
+            try:
+                normalized["level"] = score_level(int(normalized["score"]))
+            except (TypeError, ValueError):
+                pass
+            return normalized
+        return values
 
     @field_validator("need_follow", mode="before")
     @classmethod
@@ -35,14 +47,6 @@ class DifyScoreOutput(BaseModel):
                 return False
         raise ValueError("need_follow must be a boolean or a supported boolean label")
 
-    @model_validator(mode="after")
-    def validate_level(self) -> DifyScoreOutput:
-        expected = score_level(self.score)
-        if self.level != expected:
-            raise ValueError(f"level must be {expected} when score is {self.score}")
-        return self
-
-
 @dataclass(frozen=True, slots=True)
 class DifyScoringInput:
     chat_history: str
@@ -54,13 +58,11 @@ class DifyScoringInput:
 
 
 def score_level(score: int) -> str:
-    if score >= 90:
-        return "A"
     if score >= 70:
+        return "A"
+    if score >= 31:
         return "B"
-    if score >= 40:
-        return "C"
-    return "D"
+    return "C"
 
 
 class DifyScoringService:
@@ -102,8 +104,6 @@ class DifyScoringService:
                 timeout=self.settings.dify_scoring_timeout_seconds,
             ) as client:
                 response = await client.post("workflows/run", json=payload, headers=headers)
-                response.raise_for_status()
-                body = response.json()
         except httpx.TimeoutException as exc:
             logger.warning(
                 "dify_scoring_timeout customer_id=%s",
@@ -115,22 +115,57 @@ class DifyScoringService:
                 retryable=True,
                 error_code="DIFY_SCORING_TIMEOUT",
             ) from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            status_code = (
-                exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            )
+        except httpx.HTTPError as exc:
             logger.warning(
-                "dify_scoring_request_failed customer_id=%s status_code=%s error=%s",
+                "dify_scoring_request_failed customer_id=%s status_code=none "
+                "content_type=none response_summary=none error=%s",
                 scoring_input.user,
-                status_code,
                 type(exc).__name__,
             )
             raise UpstreamServiceError(
                 "Dify scoring workflow",
-                "request failed or returned invalid JSON",
-                retryable=status_code in {500, 502, 503},
-                upstream_status_code=status_code,
+                "request failed",
+                retryable=True,
                 error_code="DIFY_SCORING_FAILED",
+            ) from exc
+
+        content_type = response.headers.get("content-type", "")
+        response_summary = _response_summary(response)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "dify_scoring_http_error customer_id=%s status_code=%s "
+                "content_type=%s response_summary=%s",
+                scoring_input.user,
+                response.status_code,
+                content_type or "none",
+                response_summary,
+            )
+            raise UpstreamServiceError(
+                "Dify scoring workflow",
+                f"returned HTTP {response.status_code}",
+                retryable=response.status_code in {500, 502, 503},
+                upstream_status_code=response.status_code,
+                error_code=f"DIFY_SCORING_HTTP_{response.status_code}",
+            ) from exc
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            logger.warning(
+                "dify_scoring_invalid_json customer_id=%s status_code=%s "
+                "content_type=%s response_summary=%s",
+                scoring_input.user,
+                response.status_code,
+                content_type or "none",
+                response_summary,
+            )
+            raise UpstreamServiceError(
+                "Dify scoring workflow",
+                "returned invalid JSON",
+                upstream_status_code=response.status_code,
+                error_code="DIFY_SCORING_INVALID_JSON",
             ) from exc
 
         try:
@@ -164,7 +199,14 @@ def _extract_output(body: dict[str, Any]) -> dict[str, Any]:
     if isinstance(outputs, dict) and not {"score", "level", "need_follow", "reason"}.issubset(
         outputs
     ):
-        for key in ("result", "output", "text", "json"):
+        for key in (
+            "structured_output",
+            "score_result",
+            "result",
+            "output",
+            "text",
+            "json",
+        ):
             if key in outputs:
                 candidate = outputs[key]
                 break
@@ -175,3 +217,8 @@ def _extract_output(body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(candidate, dict):
         raise TypeError("Workflow outputs are not an object")
     return candidate
+
+
+def _response_summary(response: httpx.Response, *, limit: int = 1000) -> str:
+    summary = " ".join(response.text.split())
+    return summary[:limit] if summary else "<empty>"
