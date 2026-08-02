@@ -10,10 +10,11 @@ import {
   getWhatsAppConfigStatus,
   testWhatsAppConnector,
 } from "@/api/connectors";
+import { getUsers } from "@/api/users";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import WhatsAppWebConnectPanel from "@/components/connectors/WhatsAppWebConnectPanel.vue";
-import type { Connector } from "@/types/business";
+import type { Connector, SalesUser } from "@/types/business";
 import { formatDateTime } from "@/utils/format";
 
 interface GenericConfigRow {
@@ -27,12 +28,15 @@ const loading = ref(false);
 const statusLoading = ref(false);
 const saving = ref(false);
 const testing = ref(false);
+const ownerSaving = ref(false);
 const error = ref("");
 const rows = ref<Connector[]>([]);
 const selected = ref<Connector | null>(null);
 const dialogVisible = ref(false);
 const configuredKeys = ref<string[]>([]);
 const webhookUrl = ref("");
+const defaultOwnerId = ref<string | null>(null);
+const salesUsers = ref<SalesUser[]>([]);
 const genericConfigRows = reactive<GenericConfigRow[]>([
   { key: "", value: "", value_type: "string", is_secret: true },
 ]);
@@ -88,6 +92,7 @@ async function openConfig(row: Connector): Promise<void> {
   selected.value = row;
   configuredKeys.value = [];
   webhookUrl.value = "";
+  defaultOwnerId.value = null;
   Object.assign(whatsappForm, {
     adapter: "cloud_api",
     phone_number_id: row.external_account_id === "demo-template"
@@ -110,6 +115,7 @@ async function openConfig(row: Connector): Promise<void> {
     configuredKeys.value = status.configured_keys;
     webhookUrl.value = status.webhook_url;
     whatsappForm.adapter = status.adapter === "webjs_gateway" ? "webjs_gateway" : "cloud_api";
+    defaultOwnerId.value = status.default_owner_id;
   } catch (requestError) {
     ElMessage.error(getApiErrorMessage(requestError));
   } finally {
@@ -157,6 +163,7 @@ async function save(): Promise<void> {
       const result = await configureConnector({
         connector_id: selected.value.id,
         values,
+        default_owner_id: defaultOwnerId.value,
       });
       configuredKeys.value = Array.from(
         new Set([...configuredKeys.value, ...result.configured_keys]),
@@ -182,6 +189,23 @@ async function save(): Promise<void> {
   }
 }
 
+async function saveDefaultOwner(): Promise<void> {
+  if (!selected.value || !isWhatsApp.value) return;
+  ownerSaving.value = true;
+  try {
+    await configureConnector({
+      connector_id: selected.value.id,
+      values: [],
+      default_owner_id: defaultOwnerId.value,
+    });
+    ElMessage.success("WhatsApp 默认负责人已保存");
+  } catch (errorValue) {
+    ElMessage.error(getApiErrorMessage(errorValue));
+  } finally {
+    ownerSaving.value = false;
+  }
+}
+
 async function testConnection(): Promise<void> {
   if (!selected.value) return;
   testing.value = true;
@@ -199,7 +223,16 @@ async function testConnection(): Promise<void> {
   }
 }
 
-onMounted(load);
+onMounted(async () => {
+  await Promise.all([
+    load(),
+    getUsers().then((result) => {
+      salesUsers.value = result.data.filter(
+        (user) => user.role === "sales" && user.status === "active",
+      );
+    }),
+  ]);
+});
 </script>
 
 <template>
@@ -292,6 +325,21 @@ onMounted(load);
             <el-radio-button value="webjs_gateway">WhatsApp Web 扫码登录</el-radio-button>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="默认销售负责人">
+          <el-select
+            v-model="defaultOwnerId"
+            clearable
+            class="full-width"
+            placeholder="未配置时仅自动分配唯一销售"
+          >
+            <el-option
+              v-for="user in salesUsers"
+              :key="user.id"
+              :label="user.sales_name || user.display_name"
+              :value="user.id"
+            />
+          </el-select>
+        </el-form-item>
         <template v-if="!isWhatsAppWeb">
           <el-form-item label="商务号码 ID" required>
             <el-input
@@ -375,6 +423,14 @@ onMounted(load);
           @click="testConnection"
         >
           测试连接
+        </el-button>
+        <el-button
+          v-if="isWhatsAppWeb"
+          type="primary"
+          :loading="ownerSaving"
+          @click="saveDefaultOwner"
+        >
+          保存默认负责人
         </el-button>
         <el-button v-if="!isWhatsAppWeb" type="primary" :loading="saving" @click="save">
           加密保存

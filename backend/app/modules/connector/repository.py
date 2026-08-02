@@ -3,8 +3,11 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.auth.role import Role
+from app.models.auth.user import User
+from app.models.auth.user_role import UserRole
 from app.models.connector.connector import Connector
-from app.models.connector.connector_config import ConnectorConfig
+from app.models.connector.connector_config import DEFAULT_OWNER_CONFIG_KEY, ConnectorConfig
 
 
 class ConnectorRepository:
@@ -65,3 +68,27 @@ class ConnectorRepository:
 
     def add_config(self, config: ConnectorConfig) -> None:
         self.session.add(config)
+
+    async def get_default_owner_config(self, connector_id: int) -> ConnectorConfig | None:
+        return await self.session.scalar(
+            select(ConnectorConfig).where(
+                ConnectorConfig.connector_id == connector_id,
+                ConnectorConfig.config_key == DEFAULT_OWNER_CONFIG_KEY,
+            )
+        )
+
+    async def get_sales_user(self, tenant_id: int, public_id: str) -> User | None:
+        return await self.session.scalar(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.public_id == public_id,
+                User.status == "active",
+                User.deleted_at.is_(None),
+                Role.tenant_id == tenant_id,
+                Role.code == "sales",
+            )
+            .limit(1)
+        )

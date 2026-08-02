@@ -11,6 +11,8 @@ from app.db.base import (
     TimestampMixin,
 )
 
+DEFAULT_OWNER_CONFIG_KEY = "default_owner_user_id"
+
 
 class ConnectorConfig(BigIntPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "connector_configs"
@@ -37,6 +39,10 @@ class ConnectorConfig(BigIntPrimaryKeyMixin, TimestampMixin, Base):
         Boolean, nullable=False, default=True, server_default="1"
     )
     updated_by: Mapped[int | None] = mapped_column(
+        BIGINT_UNSIGNED,
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    default_owner_user_id: Mapped[int | None] = mapped_column(
         BIGINT_UNSIGNED,
         ForeignKey("users.id", ondelete="SET NULL"),
     )

@@ -12,7 +12,7 @@ from app.connectors.whatsapp.client import (
 from app.core.encryption import ConfigCipher
 from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.models.connector.connector import Connector
-from app.models.connector.connector_config import ConnectorConfig
+from app.models.connector.connector_config import DEFAULT_OWNER_CONFIG_KEY, ConnectorConfig
 from app.modules.connector.repository import ConnectorRepository
 from app.modules.connector.schemas import ConnectorConfigRequest, ConnectorConfigResponse
 
@@ -59,7 +59,7 @@ class ConnectorService:
             if config.value_encrypted is not None
         }
         effective_values.update({item.key: item.value for item in payload.values})
-        if connector.provider == "whatsapp":
+        if connector.provider == "whatsapp" and payload.values:
             if unsupported := set(keys) - SUPPORTED_CONFIG_KEYS:
                 raise ConflictError(
                     "WHATSAPP_CONFIG_KEY_UNSUPPORTED",
@@ -96,7 +96,32 @@ class ConnectorService:
             )
             config.updated_by = principal.user_id
 
-        if connector.provider == "whatsapp":
+        default_owner_id: str | None = None
+        if "default_owner_id" in payload.model_fields_set:
+            owner_config = await self.repository.get_default_owner_config(connector.id)
+            if owner_config is None:
+                owner_config = ConnectorConfig(
+                    tenant_id=principal.tenant_id,
+                    connector_id=connector.id,
+                    config_key=DEFAULT_OWNER_CONFIG_KEY,
+                    value_type="user_reference",
+                    is_secret=False,
+                )
+                self.repository.add_config(owner_config)
+            owner_config.updated_by = principal.user_id
+            if payload.default_owner_id is None:
+                owner_config.default_owner_user_id = None
+            else:
+                owner = await self.repository.get_sales_user(
+                    principal.tenant_id,
+                    payload.default_owner_id,
+                )
+                if owner is None:
+                    raise ResourceNotFoundError("Active sales user")
+                owner_config.default_owner_user_id = owner.id
+                default_owner_id = owner.public_id
+
+        if connector.provider == "whatsapp" and payload.values:
             external_account_id = effective_values.get("phone_number_id")
             if str(effective_values.get("adapter") or "cloud_api") == "webjs_gateway":
                 external_account_id = effective_values.get("session_id")
@@ -122,4 +147,5 @@ class ConnectorService:
             connector_id=connector.public_id,
             configured_keys=sorted(keys),
             key_version=self.cipher.key_version,
+            default_owner_id=default_owner_id,
         )

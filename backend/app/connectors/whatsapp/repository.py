@@ -4,9 +4,12 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai.ai_agent_run import AiAgentRun
+from app.models.auth.role import Role
 from app.models.auth.tenant import Tenant
+from app.models.auth.user import User
+from app.models.auth.user_role import UserRole
 from app.models.connector.connector import Connector
-from app.models.connector.connector_config import ConnectorConfig
+from app.models.connector.connector_config import DEFAULT_OWNER_CONFIG_KEY, ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
 from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
@@ -188,6 +191,53 @@ class WhatsAppRepository:
                 )
             ).all()
         )
+
+    async def get_configured_default_owner(
+        self,
+        tenant_id: int,
+        connector_id: int,
+    ) -> User | None:
+        return await self.session.scalar(
+            select(User)
+            .join(
+                ConnectorConfig,
+                ConnectorConfig.default_owner_user_id == User.id,
+            )
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                ConnectorConfig.tenant_id == tenant_id,
+                ConnectorConfig.connector_id == connector_id,
+                ConnectorConfig.config_key == DEFAULT_OWNER_CONFIG_KEY,
+                User.tenant_id == tenant_id,
+                User.status == "active",
+                User.deleted_at.is_(None),
+                Role.tenant_id == tenant_id,
+                Role.code == "sales",
+            )
+            .limit(1)
+        )
+
+    async def get_unique_active_sales_user(self, tenant_id: int) -> User | None:
+        users = list(
+            (
+                await self.session.scalars(
+                    select(User)
+                    .join(UserRole, UserRole.user_id == User.id)
+                    .join(Role, Role.id == UserRole.role_id)
+                    .where(
+                        User.tenant_id == tenant_id,
+                        User.status == "active",
+                        User.deleted_at.is_(None),
+                        Role.tenant_id == tenant_id,
+                        Role.code == "sales",
+                    )
+                    .distinct()
+                    .limit(2)
+                )
+            ).all()
+        )
+        return users[0] if len(users) == 1 else None
 
     async def verification_candidates(
         self,

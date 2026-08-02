@@ -21,7 +21,7 @@ def _load_revision():
 def test_alembic_has_one_linear_head() -> None:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["20260802_0008"]
+    assert scripts.get_heads() == ["20260802_0009"]
     assert scripts.get_base() == "20260724_0001"
 
 

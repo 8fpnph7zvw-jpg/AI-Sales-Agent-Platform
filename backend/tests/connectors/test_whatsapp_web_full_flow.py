@@ -14,10 +14,13 @@ from app.connectors.whatsapp.schemas import (
 from app.connectors.whatsapp.service import WhatsAppService
 from app.core.config import Settings
 from app.integrations.dify.client import DifyChatResult
+from app.models.ai.ai_agent_run import AiAgentRun
 from app.models.connector.webhook_log import WebhookLog
 from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
 from app.models.conversation.message import Message
+from app.models.customer.customer import Customer
+from app.models.customer.customer_session import CustomerSession
 
 
 class FlowCipher:
@@ -51,6 +54,12 @@ class FlowSession:
             model.unread_count = model.unread_count or 0
             model.version = model.version or 1
             self.repository.conversation = model
+        elif isinstance(model, Customer):
+            self.repository.customer = model
+        elif isinstance(model, CustomerSession):
+            self.repository.customer_session = model
+        elif isinstance(model, AiAgentRun):
+            self.repository.runs.append(model)
         elif isinstance(model, Message):
             self.repository.messages.append(model)
         self.models.append(model)
@@ -69,6 +78,9 @@ class FlowRepository:
         self.whatsapp_session: WhatsAppSession | None = None
         self.webhook_log: WebhookLog | None = None
         self.conversation: Conversation | None = None
+        self.customer: Customer | None = None
+        self.customer_session: CustomerSession | None = None
+        self.runs: list[AiAgentRun] = []
         self.messages: list[Message] = []
         self.sequence = 0
         self.configs = [
@@ -151,21 +163,62 @@ class FlowRepository:
         tenant_id: int,
         connector_id: int,
         external_contact_id: str,
-    ) -> None:
-        del tenant_id, connector_id, external_contact_id
+    ) -> tuple[CustomerSession, Customer] | None:
+        if (
+            self.customer_session is not None
+            and self.customer is not None
+            and self.customer_session.tenant_id == tenant_id
+            and self.customer_session.connector_id == connector_id
+            and self.customer_session.external_contact_id == external_contact_id
+        ):
+            return self.customer_session, self.customer
         return None
 
-    async def get_customer_by_phone(self, tenant_id: int, phone_e164: str) -> None:
-        del tenant_id, phone_e164
+    async def get_customer_by_phone(
+        self, tenant_id: int, phone_e164: str
+    ) -> Customer | None:
+        if (
+            self.customer is not None
+            and self.customer.tenant_id == tenant_id
+            and self.customer.phone_e164 == phone_e164
+        ):
+            return self.customer
         return None
 
     async def get_open_conversation(
         self,
         tenant_id: int,
         customer_session_id: int,
-    ) -> None:
-        del tenant_id, customer_session_id
+    ) -> Conversation | None:
+        if (
+            self.conversation is not None
+            and self.conversation.tenant_id == tenant_id
+            and self.conversation.customer_session_id == customer_session_id
+            and self.conversation.status in {"open", "pending"}
+        ):
+            return self.conversation
         return None
+
+    async def get_configured_default_owner(
+        self, tenant_id: int, connector_id: int
+    ) -> SimpleNamespace:
+        assert tenant_id == self.tenant.id
+        assert connector_id == self.connector.id
+        return SimpleNamespace(id=20, public_id="sales-user-public-id")
+
+    async def get_unique_active_sales_user(self, tenant_id: int) -> None:
+        assert tenant_id == self.tenant.id
+        return None
+
+    async def latest_dify_conversation_id(self, conversation_id: int) -> str | None:
+        matches = [
+            run.dify_conversation_id
+            for run in self.runs
+            if run.conversation_id == conversation_id
+            and run.status == "succeeded"
+            and run.dify_conversation_id
+        ]
+        return matches[-1] if matches else None
 
     async def get_conversation_for_update(self, conversation_id: int) -> Conversation | None:
         if self.conversation is not None and self.conversation.id == conversation_id:
@@ -184,9 +237,11 @@ class FlowRepository:
 class FlowDify:
     def __init__(self) -> None:
         self.queries: list[str] = []
+        self.conversation_ids: list[str | None] = []
 
     async def chat(self, **kwargs: Any) -> DifyChatResult:
         self.queries.append(kwargs["query"])
+        self.conversation_ids.append(kwargs["conversation_id"])
         return DifyChatResult(
             answer="Dify sales reply",
             conversation_id="dify-conversation-1",
@@ -320,6 +375,11 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
 
     assert response.processed == 1
     assert dify.queries == ["Need a quotation"]
+    assert dify.conversation_ids == [None]
+    assert repository.customer is not None
+    assert repository.customer.owner_user_id == 20
+    assert repository.conversation is not None
+    assert repository.conversation.assigned_user_id == 20
     outbound = next(message for message in repository.messages if message.direction == "outbound")
     assert outbound.status == "sent"
     assert outbound.external_message_id == "webjs-outbound-1"
@@ -330,3 +390,20 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
         "/api/whatsapp/qr",
         "/api/whatsapp/send",
     ]
+
+    repository.webhook_log = None
+    second = await service.handle_gateway_message(
+        WhatsAppGatewayInboundRequest(
+            phone="15550002222",
+            message="1000 units USA",
+            message_id="webjs-inbound-2",
+            timestamp=1785376860,
+            session_id="sales-web-01",
+        ),
+        raw_body=b'{"message":"1000 units USA"}',
+        headers={"x-whatsapp-gateway-token": "gateway-secret"},
+    )
+
+    assert second.processed == 1
+    assert dify.queries == ["Need a quotation", "1000 units USA"]
+    assert dify.conversation_ids == [None, "dify-conversation-1"]

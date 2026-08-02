@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,6 +14,8 @@ from app.models.conversation.message import Message
 from app.models.system.outbox_event import OutboxEvent
 from app.modules.ai_agent.repository import AiAgentRepository
 from app.modules.ai_agent.schemas import AgentChatRequest, AgentChatResponse, AgentUsage
+
+logger = logging.getLogger(__name__)
 
 
 class AiAgentService:
@@ -101,11 +104,23 @@ class AiAgentService:
         self.repository.add(run)
         await self.session.commit()
 
+        dify_conversation_id = await self.repository.latest_dify_conversation_id(
+            conversation.id
+        )
+        if dify_conversation_id:
+            logger.info(
+                "dify_conversation_reuse conversation_id=%s "
+                "dify_conversation_id=%s customer_id=%s",
+                conversation.public_id,
+                dify_conversation_id,
+                customer_public_id,
+            )
+
         try:
             result = await self.dify.chat(
                 query=payload.query,
                 user=customer_public_id,
-                conversation_id=None,
+                conversation_id=dify_conversation_id,
                 inputs=payload.inputs,
                 request_context={
                     "request_id": request_id,

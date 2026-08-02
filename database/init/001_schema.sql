@@ -289,6 +289,7 @@ CREATE TABLE connector_configs (
     key_version VARCHAR(64) NULL,
     is_secret BOOLEAN NOT NULL DEFAULT TRUE,
     updated_by BIGINT UNSIGNED NULL,
+    default_owner_user_id BIGINT UNSIGNED NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CONSTRAINT pk_connector_configs PRIMARY KEY (id),
@@ -299,8 +300,11 @@ CREATE TABLE connector_configs (
         FOREIGN KEY (connector_id) REFERENCES connectors (id) ON DELETE CASCADE,
     CONSTRAINT fk_connector_configs_updated_by_users
         FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL,
+    CONSTRAINT fk_connector_configs_default_owner_user_id_users
+        FOREIGN KEY (default_owner_user_id) REFERENCES users (id) ON DELETE SET NULL,
     INDEX ix_connector_configs_tenant_id (tenant_id),
-    INDEX ix_connector_configs_updated_by (updated_by)
+    INDEX ix_connector_configs_updated_by (updated_by),
+    INDEX ix_connector_configs_default_owner_user_id (default_owner_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE customer_sessions (

@@ -43,6 +43,7 @@ class WhatsAppConfigStatusResponse(BaseModel):
     configured_keys: list[str]
     required_keys: list[str]
     webhook_url: str
+    default_owner_id: str | None = None
 
 
 class WhatsAppWebSessionStatusResponse(BaseModel):

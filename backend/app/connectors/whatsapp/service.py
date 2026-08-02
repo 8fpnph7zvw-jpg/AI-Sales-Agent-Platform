@@ -38,6 +38,7 @@ from app.core.exceptions import (
 from app.integrations.dify.client import DifyChatResult, DifyClient
 from app.models.ai.ai_agent_run import AiAgentRun
 from app.models.auth.tenant import Tenant
+from app.models.auth.user import User
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
 from app.models.connector.webhook_log import WebhookLog
@@ -102,12 +103,17 @@ class WhatsAppService:
             if config.value_encrypted is not None or config.secret_ref is not None
         )
         adapter = await self._configured_adapter(connector)
+        default_owner = await self.repository.get_configured_default_owner(
+            principal.tenant_id,
+            connector.id,
+        )
         return WhatsAppConfigStatusResponse(
             connector_id=connector.public_id,
             adapter=adapter,
             configured_keys=configured,
             required_keys=list(required_config_keys(adapter)),
             webhook_url=webhook_url,
+            default_owner_id=default_owner.public_id if default_owner else None,
         )
 
     async def test_connection(
@@ -693,11 +699,22 @@ class WhatsAppService:
         webhook_log.status = "processing"
         webhook_log.attempt_count += 1
         await self.session.commit()
+        dify_conversation_id = await self.repository.latest_dify_conversation_id(
+            conversation.id
+        )
+        if dify_conversation_id:
+            logger.info(
+                "dify_conversation_reuse conversation_id=%s "
+                "dify_conversation_id=%s customer_id=%s",
+                conversation.public_id,
+                dify_conversation_id,
+                customer.public_id,
+            )
         try:
             dify_result = await self.dify.chat(
                 query=self._text(envelope),
                 user=customer.public_id,
-                conversation_id=None,
+                conversation_id=dify_conversation_id,
                 inputs={},
                 request_context={
                     "request_id": webhook_log.trace_id,
@@ -838,11 +855,23 @@ class WhatsAppService:
         webhook_log.attempt_count += 1
         await self.session.commit()
 
+        dify_conversation_id = await self.repository.latest_dify_conversation_id(
+            conversation.id
+        )
+        if dify_conversation_id:
+            logger.info(
+                "dify_conversation_reuse conversation_id=%s "
+                "dify_conversation_id=%s customer_id=%s",
+                conversation.public_id,
+                dify_conversation_id,
+                customer.public_id,
+            )
+
         try:
             result = await self.dify.chat(
                 query=inbound.content_text or "",
                 user=customer.public_id,
-                conversation_id=None,
+                conversation_id=dify_conversation_id,
                 inputs={},
                 request_context={
                     "request_id": webhook_log.trace_id,
@@ -913,6 +942,7 @@ class WhatsAppService:
                 phone_e164,
             )
             if customer is None:
+                owner, owner_source = await self._resolve_new_customer_owner(runtime)
                 customer = Customer(
                     tenant_id=runtime.tenant.id,
                     name=envelope.sender.display_name or phone_e164,
@@ -924,9 +954,19 @@ class WhatsAppService:
                     tags=["whatsapp"],
                     consent_status="unknown",
                     last_contact_at=now,
+                    owner_user_id=owner.id if owner else None,
                 )
                 self.session.add(customer)
                 await self.session.flush()
+                logger.info(
+                    "whatsapp_customer_owner_resolved tenant_id=%s connector_id=%s "
+                    "customer_id=%s owner_user_id=%s source=%s",
+                    runtime.tenant.id,
+                    runtime.connector.public_id,
+                    customer.public_id,
+                    owner.public_id if owner else None,
+                    owner_source,
+                )
             customer_session = CustomerSession(
                 tenant_id=runtime.tenant.id,
                 customer_id=customer.id,
@@ -995,6 +1035,21 @@ class WhatsAppService:
         conversation.version += 1
         await self.session.flush()
         return inbound, conversation, customer_session, customer
+
+    async def _resolve_new_customer_owner(
+        self,
+        runtime: WhatsAppRuntime,
+    ) -> tuple[User | None, str]:
+        owner = await self.repository.get_configured_default_owner(
+            runtime.tenant.id,
+            runtime.connector.id,
+        )
+        if owner is not None:
+            return owner, "connector_default"
+        owner = await self.repository.get_unique_active_sales_user(runtime.tenant.id)
+        if owner is not None:
+            return owner, "single_active_sales"
+        return None, "unassigned"
 
     async def _create_outbound(
         self,

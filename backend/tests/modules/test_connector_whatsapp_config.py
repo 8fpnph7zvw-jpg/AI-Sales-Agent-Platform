@@ -48,6 +48,21 @@ class FakeRepository:
     def add_config(self, config: ConnectorConfig) -> None:
         self.configs.append(config)
 
+    async def get_default_owner_config(self, connector_id: int) -> ConnectorConfig | None:
+        assert connector_id == 10
+        return next(
+            (config for config in self.configs if config.config_key == "default_owner_user_id"),
+            None,
+        )
+
+    async def get_sales_user(
+        self, tenant_id: int, public_id: str
+    ) -> SimpleNamespace | None:
+        assert tenant_id == 1
+        if public_id == "01ARZ3NDEKTSV4RRFFQ69G5FAX":
+            return SimpleNamespace(id=30, public_id=public_id)
+        return None
+
 
 class FakeSession:
     committed = False
@@ -153,3 +168,45 @@ async def test_whatsapp_web_config_saves_adapter_and_session_id() -> None:
     assert connector.session_id == "sales-web-01"
     assert connector.external_account_id == "sales-web-01"
     assert connector.status == "draft"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_default_owner_maps_public_id_to_internal_sales_id() -> None:
+    connector = SimpleNamespace(
+        id=10,
+        public_id="01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        provider="whatsapp",
+        external_account_id="configured-account",
+        session_id=None,
+        status="active",
+        health_status="healthy",
+        health_detail=None,
+        last_health_check_at=None,
+    )
+    repository = FakeRepository(connector)
+    session = FakeSession()
+    service = ConnectorService(session, repository, FakeCipher())
+    principal = Principal(
+        user_id=20,
+        user_public_id="admin-public-id",
+        tenant_id=1,
+        tenant_public_id="tenant-public-id",
+        permissions=frozenset({"connector.secret_manage"}),
+    )
+    payload = ConnectorConfigRequest.model_validate(
+        {
+            "connector_id": connector.public_id,
+            "values": [],
+            "default_owner_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        }
+    )
+
+    response = await service.configure(principal, payload)
+
+    owner_config = repository.configs[0]
+    assert owner_config.config_key == "default_owner_user_id"
+    assert owner_config.default_owner_user_id == 30
+    assert owner_config.is_secret is False
+    assert response.default_owner_id == "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+    assert connector.status == "active"
+    assert session.committed is True

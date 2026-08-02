@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ConnectorRead(BaseModel):
@@ -38,10 +38,18 @@ class ConnectorConfigValue(BaseModel):
 
 class ConnectorConfigRequest(BaseModel):
     connector_id: str = Field(min_length=26, max_length=26)
-    values: list[ConnectorConfigValue] = Field(min_length=1, max_length=100)
+    values: list[ConnectorConfigValue] = Field(default_factory=list, max_length=100)
+    default_owner_id: str | None = Field(default=None, min_length=26, max_length=26)
+
+    @model_validator(mode="after")
+    def require_change(self) -> ConnectorConfigRequest:
+        if not self.values and "default_owner_id" not in self.model_fields_set:
+            raise ValueError("values or default_owner_id is required")
+        return self
 
 
 class ConnectorConfigResponse(BaseModel):
     connector_id: str
     configured_keys: list[str]
     key_version: str
+    default_owner_id: str | None = None
