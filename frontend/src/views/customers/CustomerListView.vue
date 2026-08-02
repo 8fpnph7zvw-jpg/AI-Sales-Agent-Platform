@@ -69,9 +69,9 @@ function search(): void {
 }
 
 function intentTagType(level: string | null): "danger" | "warning" | "success" | "info" {
-  if (level === "hot" || level === "high") return "danger";
-  if (level === "warm" || level === "medium") return "warning";
-  if (level === "low") return "info";
+  if (level === "A" || level === "hot" || level === "high") return "danger";
+  if (level === "B" || level === "warm" || level === "medium") return "warning";
+  if (level === "D" || level === "low") return "info";
   return "success";
 }
 

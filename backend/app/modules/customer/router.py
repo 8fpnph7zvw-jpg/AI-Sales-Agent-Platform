@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
@@ -11,6 +11,7 @@ from app.modules.customer.schemas import (
     CustomerListResponse,
     CustomerOwnerUpdate,
     CustomerRead,
+    CustomerUpdate,
 )
 from app.modules.customer.service import CustomerService
 
@@ -67,6 +68,49 @@ async def create_customer(
 ) -> CustomerRead:
     customer = await service.create_customer(principal, payload)
     return CustomerRead.model_validate(customer)
+
+
+@router.get("/{customer_id}", response_model=CustomerRead)
+async def get_customer(
+    customer_id: str,
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    principal: Annotated[
+        Principal,
+        Depends(
+            require_any_permission(
+                "customer.read_own",
+                "customer.read_team",
+                "customer.read_all",
+            )
+        ),
+    ],
+) -> CustomerRead:
+    customer = await service.get_customer(principal, customer_id)
+    return CustomerRead.model_validate(customer)
+
+
+@router.patch("/{customer_id}", response_model=CustomerRead)
+async def update_customer(
+    customer_id: str,
+    payload: CustomerUpdate,
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("customer.update_own", "customer.update_all")),
+    ],
+) -> CustomerRead:
+    customer = await service.update_customer(principal, customer_id, payload)
+    return CustomerRead.model_validate(customer)
+
+
+@router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer(
+    customer_id: str,
+    service: Annotated[CustomerService, Depends(get_customer_service)],
+    principal: Annotated[Principal, Depends(require_any_permission("customer.delete"))],
+) -> Response:
+    await service.delete_customer(principal, customer_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.patch("/{customer_id}/owner", response_model=CustomerRead)

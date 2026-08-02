@@ -29,6 +29,18 @@ def test_extracts_json_string_from_dify_workflow_outputs() -> None:
     assert _extract_output(body)["score"] == 90
 
 
+def test_accepts_chinese_need_follow_label_from_workflow() -> None:
+    output = DifyScoreOutput.model_validate(
+        {
+            "score": 95,
+            "level": "A",
+            "need_follow": "是",
+            "reason": "客户明确要求报价",
+        }
+    )
+    assert output.need_follow is True
+
+
 def test_rejects_level_that_does_not_match_score() -> None:
     with pytest.raises(ValueError):
         DifyScoreOutput(score=80, level="A", need_follow=True, reason="Mismatch")

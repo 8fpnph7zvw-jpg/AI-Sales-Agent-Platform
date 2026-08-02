@@ -30,6 +30,29 @@ class CustomerCreate(BaseModel):
         return value.upper() if value else None
 
 
+class CustomerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    company_name: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=254)
+    phone_e164: str | None = Field(default=None, max_length=32)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    language: str | None = Field(default=None, max_length=16)
+    lifecycle_stage: str | None = Field(default=None, min_length=1, max_length=32)
+    tags: list[str] | None = Field(default=None, max_length=50)
+    notes: str | None = Field(default=None, max_length=5000)
+    do_not_contact: bool | None = None
+
+    @field_validator("email")
+    @classmethod
+    def normalize_update_email(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else None
+
+    @field_validator("country_code")
+    @classmethod
+    def normalize_update_country(cls, value: str | None) -> str | None:
+        return value.upper() if value else None
+
+
 class CustomerRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
