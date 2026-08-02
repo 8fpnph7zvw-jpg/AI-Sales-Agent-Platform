@@ -76,13 +76,16 @@ class DifyScoringService:
     async def run(self, scoring_input: DifyScoringInput) -> DifyScoreOutput:
         if not self.settings.dify_scoring_api_key:
             raise ServiceConfigurationError("DIFY_SCORING_API_KEY is not configured.")
+        conversation_history = (
+            f"客户聊天记录:\n{scoring_input.chat_history}\n\n"
+            f"客户资料:\n{scoring_input.customer_profile}\n\n"
+            f"产品需求:\n{scoring_input.product_requirement}\n\n"
+            f"数量:\n{scoring_input.quantity}\n\n"
+            f"国家:\n{scoring_input.country}"
+        )
         payload = {
             "inputs": {
-                "chat_history": scoring_input.chat_history,
-                "customer_profile": scoring_input.customer_profile,
-                "product_requirement": scoring_input.product_requirement,
-                "quantity": scoring_input.quantity,
-                "country": scoring_input.country,
+                "conversation_history": conversation_history,
             },
             "response_mode": "blocking",
             "user": scoring_input.user,

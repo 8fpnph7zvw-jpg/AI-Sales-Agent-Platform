@@ -18,6 +18,7 @@ from app.services.dify_scoring_service import (
 
 class FakeAsyncClient:
     response: httpx.Response
+    last_post_kwargs: dict[str, object] = {}
 
     def __init__(self, **_kwargs: object) -> None:
         pass
@@ -29,6 +30,7 @@ class FakeAsyncClient:
         return None
 
     async def post(self, *_args: object, **_kwargs: object) -> httpx.Response:
+        self.__class__.last_post_kwargs = _kwargs
         return self.response
 
 
@@ -139,6 +141,53 @@ def test_extracts_score_result_object() -> None:
     }
 
     assert _extract_output(body)["score"] == 55
+
+
+@pytest.mark.asyncio
+async def test_sends_merged_conversation_history_to_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeAsyncClient.response = httpx.Response(
+        200,
+        json={
+            "data": {
+                "outputs": {
+                    "score_result": {
+                        "score": 85,
+                        "level": "A",
+                        "need_follow": "yes",
+                        "reason": "Ready",
+                    }
+                }
+            }
+        },
+        request=httpx.Request("POST", "https://api.dify.ai/v1/workflows/run"),
+    )
+    FakeAsyncClient.last_post_kwargs = {}
+    monkeypatch.setattr(
+        "app.services.dify_scoring_service.httpx.AsyncClient",
+        FakeAsyncClient,
+    )
+    service = DifyScoringService(
+        Settings(_env_file=None, dify_scoring_api_key="workflow-key")
+    )
+
+    await service.run(scoring_input())
+
+    payload = FakeAsyncClient.last_post_kwargs["json"]
+    assert payload == {
+        "inputs": {
+            "conversation_history": (
+                "客户聊天记录:\ncustomer: Need 1000 units\n\n"
+                "客户资料:\n{}\n\n"
+                "产品需求:\nJacket\n\n"
+                "数量:\n1000\n\n"
+                "国家:\nUS"
+            )
+        },
+        "response_mode": "blocking",
+        "user": "customer-public-id",
+    }
 
 
 @pytest.mark.asyncio
