@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -175,6 +176,18 @@ class FlowRepository:
         return None
 
     async def get_customer_by_phone(
+        self, tenant_id: int, phone_e164: str
+    ) -> Customer | None:
+        if (
+            self.customer is not None
+            and self.customer.tenant_id == tenant_id
+            and self.customer.phone_e164 == phone_e164
+            and self.customer.deleted_at is None
+        ):
+            return self.customer
+        return None
+
+    async def get_customer_by_phone_including_deleted(
         self, tenant_id: int, phone_e164: str
     ) -> Customer | None:
         if (
@@ -391,6 +404,8 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
         "/api/whatsapp/send",
     ]
 
+    original_customer_id = repository.customer.id
+    repository.customer.deleted_at = datetime.now(UTC)
     repository.webhook_log = None
     second = await service.handle_gateway_message(
         WhatsAppGatewayInboundRequest(
@@ -407,3 +422,6 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
     assert second.processed == 1
     assert dify.queries == ["Need a quotation", "1000 units USA"]
     assert dify.conversation_ids == [None, "dify-conversation-1"]
+    assert repository.customer.id == original_customer_id
+    assert repository.customer.deleted_at is None
+    assert sum(isinstance(model, Customer) for model in session.models) == 1

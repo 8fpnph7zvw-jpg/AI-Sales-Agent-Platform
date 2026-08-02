@@ -327,6 +327,21 @@ class WhatsAppRepository:
             )
         )
 
+    async def get_customer_by_phone_including_deleted(
+        self,
+        tenant_id: int,
+        phone_e164: str,
+    ) -> Customer | None:
+        return await self.session.scalar(
+            select(Customer)
+            .where(
+                Customer.tenant_id == tenant_id,
+                Customer.phone_e164 == phone_e164,
+            )
+            .order_by(Customer.id.desc())
+            .limit(1)
+        )
+
     async def get_open_conversation(
         self,
         tenant_id: int,

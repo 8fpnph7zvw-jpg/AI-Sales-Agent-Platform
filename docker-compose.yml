@@ -2,6 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-ai-sales-agent}
 
 x-backend-environment: &backend-environment
   APP_ENV: ${APP_ENV:-production}
+  DEMO_MODE: ${DEMO_MODE:-false}
   API_PREFIX: /api/v1
   DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
   REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
@@ -136,11 +137,15 @@ services:
     image: ai-sales-agent-backend:${IMAGE_TAG:-local}
     environment: *backend-environment
     command:
-      [
-        "sh",
-        "-c",
-        "alembic -c alembic.ini upgrade head && python scripts/initialize_demo.py",
-      ]
+      - "sh"
+      - "-c"
+      - >-
+        alembic -c alembic.ini upgrade head &&
+        if [ "$${DEMO_MODE:-false}" = "true" ]; then
+          python scripts/initialize_demo.py;
+        else
+          echo "Demo initialization skipped (set DEMO_MODE=true to enable)";
+        fi
     depends_on:
       mysql:
         condition: service_healthy

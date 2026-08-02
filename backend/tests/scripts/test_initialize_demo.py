@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from app.models.customer.customer import Customer
 from app.models.workflow.workflow import Workflow
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -67,6 +69,48 @@ def test_demo_initializer_uses_orm_and_is_wired_into_docker_migration() -> None:
     assert "op.execute" not in source
     assert "sqlalchemy.text" not in source
     assert "python scripts/initialize_demo.py" in compose
+    assert 'DEMO_MODE: ${DEMO_MODE:-false}' in compose
+    assert '$${DEMO_MODE:-false}' in compose
+
+
+@pytest.mark.asyncio
+async def test_demo_initializer_preserves_soft_deleted_customers() -> None:
+    demo = _load_script()
+    deleted_at = datetime.now(UTC)
+    customers = [
+        Customer(
+            tenant_id=1,
+            name=values["name"],
+            source_type="demo_seed",
+            source_ref=values["name"],
+            deleted_at=deleted_at,
+        )
+        for values in demo.CUSTOMERS
+    ]
+
+    class Session:
+        def __init__(self) -> None:
+            self.index = 0
+
+        async def scalar(self, _statement: object) -> Customer:
+            customer = customers[self.index]
+            self.index += 1
+            return customer
+
+        def add(self, _model: object) -> None:
+            raise AssertionError("Soft-deleted demo customers must not be recreated")
+
+        async def flush(self) -> None:
+            return None
+
+    result = await demo._upsert_customers(
+        Session(),
+        SimpleNamespace(id=1),
+        SimpleNamespace(id=2),
+    )
+
+    assert set(result) == {customer.name for customer in customers}
+    assert all(customer.deleted_at == deleted_at for customer in customers)
 
 
 @pytest.mark.asyncio

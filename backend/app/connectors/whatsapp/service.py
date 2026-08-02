@@ -942,6 +942,13 @@ class WhatsAppService:
                 phone_e164,
             )
             if customer is None:
+                customer = await self.repository.get_customer_by_phone_including_deleted(
+                    runtime.tenant.id,
+                    phone_e164,
+                )
+                if customer is not None and customer.deleted_at is not None:
+                    self._reactivate_customer(customer, now, runtime)
+            if customer is None:
                 owner, owner_source = await self._resolve_new_customer_owner(runtime)
                 customer = Customer(
                     tenant_id=runtime.tenant.id,
@@ -985,6 +992,8 @@ class WhatsAppService:
             await self.session.flush()
         else:
             customer_session, customer = context
+            if customer.deleted_at is not None:
+                self._reactivate_customer(customer, now, runtime)
             customer_session.last_seen_at = now
             customer.last_contact_at = now
             if envelope.sender.display_name and customer.name == customer.phone_e164:
@@ -1035,6 +1044,21 @@ class WhatsAppService:
         conversation.version += 1
         await self.session.flush()
         return inbound, conversation, customer_session, customer
+
+    @staticmethod
+    def _reactivate_customer(
+        customer: Customer,
+        now: datetime,
+        runtime: WhatsAppRuntime,
+    ) -> None:
+        customer.deleted_at = None
+        customer.last_contact_at = now
+        logger.info(
+            "whatsapp_customer_reactivated tenant_id=%s connector_id=%s customer_id=%s",
+            runtime.tenant.id,
+            runtime.connector.public_id,
+            customer.public_id,
+        )
 
     async def _resolve_new_customer_owner(
         self,
