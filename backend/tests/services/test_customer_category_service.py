@@ -66,6 +66,32 @@ def test_complete_purchase_context_becomes_follow_up() -> None:
     assert customer.tags == ["whatsapp", "customer-category:follow_up"]
 
 
+def test_product_quantity_country_and_shipping_without_quote_becomes_follow_up() -> None:
+    customer = make_customer()
+
+    category = CustomerCategoryService().update_customer_category(
+        customer,
+        source="scoring",
+        conversation_history="Need 1000 hats. Ship to France. By sea.",
+    )
+
+    assert category == "follow_up"
+    assert customer.tags == ["whatsapp", "customer-category:follow_up"]
+
+
+def test_product_quantity_country_without_shipping_remains_potential() -> None:
+    customer = make_customer()
+
+    category = CustomerCategoryService().update_customer_category(
+        customer,
+        source="scoring",
+        conversation_history="Need 1000 hats. Ship to France.",
+    )
+
+    assert category == "potential"
+    assert customer.tags == ["whatsapp", "customer-category:potential"]
+
+
 def test_repeat_inquiry_after_historical_win_becomes_vip() -> None:
     customer = make_customer("customer")
 

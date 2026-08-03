@@ -158,7 +158,6 @@ class CustomerCategoryService:
                 cls._has_quantity(text),
                 cls._has_country(text, country_code),
                 cls._has_shipping(text),
-                cls._has_quotation_request(text),
             )
         )
 
@@ -227,11 +226,6 @@ class CustomerCategoryService:
     @staticmethod
     def _has_quotation_request(text: str) -> bool:
         return bool(
-            re.search(
-                r"\b(?:need|want|send|provide|request|give|prepare|please)\b"
-                r".{0,30}\b(?:quotation|quote)\b",
-                text,
-            )
-            or re.search(r"\b(?:quotation|quote)\s+(?:please|required|needed)\b", text)
+            re.search(r"\b(?:quotation|quote|price|how much|cost)\b", text)
             or re.search(r"报价|报个价|正式报价|报价单", text)
         )

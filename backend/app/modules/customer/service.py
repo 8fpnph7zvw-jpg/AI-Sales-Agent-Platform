@@ -30,6 +30,7 @@ class CustomerService:
         offset: int,
         search: str | None,
         lifecycle_stage: str | None,
+        category: str | None,
     ) -> tuple[list[Customer], int]:
         return await self.repository.list(
             principal.tenant_id,
@@ -37,6 +38,7 @@ class CustomerService:
             offset=offset,
             search=search,
             lifecycle_stage=lifecycle_stage,
+            category=category,
             owner_user_id=(
                 None if "customer.read_all" in principal.permissions else principal.user_id
             ),

@@ -182,10 +182,10 @@ async def test_score_customer_triggers_customer_category_service(
     assert customer.intent_level == "A"
     assert "category_update_started customer_id=42 score=85 level=A need_follow=True" in caplog.text
     assert "conversation_history=How much this hat?" in caplog.text
-    assert "customer_requested_quote=False" in caplog.text
+    assert "customer_requested_quote=True" in caplog.text
     assert "category_update_finished customer_id=42 old_category=potential " in caplog.text
     assert "new_category=potential" in caplog.text
-    assert "missing_fields=quantity,country,shipping_method,customer_requested_quote" in caplog.text
+    assert "missing_fields=quantity,country,shipping_method" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -194,7 +194,7 @@ async def test_complete_context_updates_category_after_scoring(
 ) -> None:
     session = FakeSession()
     repository = FakeRepository(
-        customer_message="Need 1000 hats. Ship to USA. By sea. Please quote."
+        customer_message="Need 1000 hats. Ship to France. By sea."
     )
     customer = make_customer()
     orchestrator = LeadScoringOrchestrator(
@@ -210,6 +210,7 @@ async def test_complete_context_updates_category_after_scoring(
     assert customer.tags == ["whatsapp", "vip", "customer-category:follow_up"]
     assert "category_update_finished customer_id=42" in caplog.text
     assert "new_category=follow_up" in caplog.text
+    assert "customer_requested_quote=False" in caplog.text
     assert "missing_fields=none" in caplog.text
 
 

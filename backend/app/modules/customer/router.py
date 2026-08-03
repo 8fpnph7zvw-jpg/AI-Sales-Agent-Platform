@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,10 @@ async def list_customers(
     offset: Annotated[int, Query(ge=0)] = 0,
     search: Annotated[str | None, Query(max_length=160)] = None,
     lifecycle_stage: Annotated[str | None, Query(max_length=32)] = None,
+    category: Annotated[
+        Literal["potential", "follow_up", "quoted", "customer", "vip"] | None,
+        Query(),
+    ] = None,
 ) -> CustomerListResponse:
     customers, total = await service.list_customers(
         principal,
@@ -48,6 +52,7 @@ async def list_customers(
         offset=offset,
         search=search,
         lifecycle_stage=lifecycle_stage,
+        category=category,
     )
     return CustomerListResponse(
         data=[CustomerRead.model_validate(item) for item in customers],

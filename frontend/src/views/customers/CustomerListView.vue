@@ -41,7 +41,7 @@ const query = reactive({
   page: 1,
   limit: 20,
   search: "",
-  lifecycle_stage: "",
+  category: "",
 });
 
 async function load(): Promise<void> {
@@ -52,7 +52,7 @@ async function load(): Promise<void> {
       limit: query.limit,
       offset: (query.page - 1) * query.limit,
       search: query.search || undefined,
-      lifecycle_stage: query.lifecycle_stage || undefined,
+      category: query.category || undefined,
     });
     rows.value = result.data;
     total.value = result.total;
@@ -184,7 +184,7 @@ onMounted(async () => {
           @keyup.enter="search"
           @clear="search"
         />
-        <el-select v-model="query.lifecycle_stage" clearable placeholder="客户分类" @change="search">
+        <el-select v-model="query.category" clearable placeholder="客户分类" @change="search">
           <el-option
             v-for="option in customerCategoryOptions"
             :key="option.value"

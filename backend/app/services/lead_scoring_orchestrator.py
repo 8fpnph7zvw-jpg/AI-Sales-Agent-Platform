@@ -118,7 +118,6 @@ class LeadScoringOrchestrator:
             "shipping_method": CustomerCategoryService._has_shipping(
                 normalized_customer_history
             ),
-            "customer_requested_quote": customer_requested_quote,
         }
         missing_fields = [name for name, present in category_signals.items() if not present]
         old_category = self.customer_category.get_customer_category(customer)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,7 @@ class CustomerRepository:
         offset: int,
         search: str | None,
         lifecycle_stage: str | None,
+        category: str | None,
         owner_user_id: int | None,
     ) -> tuple[list[Customer], int]:
         filters = [
@@ -39,6 +42,9 @@ class CustomerRepository:
             )
         if lifecycle_stage:
             filters.append(Customer.lifecycle_stage == lifecycle_stage)
+        if category:
+            category_tag = json.dumps(f"customer-category:{category}")
+            filters.append(func.json_contains(Customer.tags, category_tag, "$") == 1)
         if owner_user_id is not None:
             filters.append(Customer.owner_user_id == owner_user_id)
 

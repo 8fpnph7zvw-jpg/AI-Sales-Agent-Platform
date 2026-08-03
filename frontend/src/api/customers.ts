@@ -11,6 +11,7 @@ export interface CustomerQuery {
   offset: number;
   search?: string;
   lifecycle_stage?: string;
+  category?: string;
 }
 
 export async function getCustomers(params: CustomerQuery): Promise<CustomerPage> {

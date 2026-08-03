@@ -1,9 +1,11 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.api.dependencies.auth import Principal
+from app.modules.customer.repository import CustomerRepository
 from app.modules.customer.schemas import CustomerUpdate
 from app.modules.customer.service import CustomerService
 
@@ -64,3 +66,48 @@ async def test_delete_customer_soft_deletes_by_public_id() -> None:
     )
     assert customer.deleted_at is not None
     session.commit.assert_awaited_once()
+
+
+class EmptyScalars:
+    def all(self) -> list[Any]:
+        return []
+
+
+class CapturingSession:
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+
+    async def scalars(self, statement: Any) -> EmptyScalars:
+        self.statements.append(statement)
+        return EmptyScalars()
+
+    async def scalar(self, statement: Any) -> int:
+        self.statements.append(statement)
+        return 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "category",
+    ["potential", "follow_up", "quoted", "customer", "vip"],
+)
+async def test_customer_category_filter_uses_json_tag(category: str) -> None:
+    session = CapturingSession()
+    repository = CustomerRepository(session)  # type: ignore[arg-type]
+
+    customers, total = await repository.list(
+        3,
+        limit=20,
+        offset=0,
+        search=None,
+        lifecycle_stage=None,
+        category=category,
+        owner_user_id=None,
+    )
+
+    assert customers == []
+    assert total == 0
+    assert len(session.statements) == 2
+    for statement in session.statements:
+        assert "json_contains(customers.tags" in str(statement)
+        assert f'"customer-category:{category}"' in statement.compile().params.values()
