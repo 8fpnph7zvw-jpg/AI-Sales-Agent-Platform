@@ -11,6 +11,9 @@ from app.modules.quotation.schemas import (
     QuotationCreate,
     QuotationListResponse,
     QuotationResponse,
+    QuotationStatus,
+    QuotationStatusResponse,
+    QuotationStatusUpdate,
 )
 from app.modules.quotation.service import QuotationService
 
@@ -32,7 +35,7 @@ async def list_quotations(
     ],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    status_filter: Annotated[str | None, Query(alias="status", max_length=24)] = None,
+    status_filter: Annotated[QuotationStatus | None, Query(alias="status")] = None,
 ) -> QuotationListResponse:
     return await service.list_quotations(
         principal,
@@ -69,3 +72,34 @@ async def create_quotation(
     ],
 ) -> QuotationResponse:
     return await service.create(principal, payload)
+
+
+@router.patch(
+    "/quotations/{quotation_id}/status",
+    response_model=QuotationStatusResponse,
+)
+async def update_quotation_status(
+    quotation_id: str,
+    payload: QuotationStatusUpdate,
+    service: Annotated[QuotationService, Depends(get_quotation_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("quotation.update_own")),
+    ],
+) -> QuotationStatusResponse:
+    return await service.update_status(principal, quotation_id, payload)
+
+
+@router.delete(
+    "/quotations/{quotation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_quotation(
+    quotation_id: str,
+    service: Annotated[QuotationService, Depends(get_quotation_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("quotation.update_own")),
+    ],
+) -> None:
+    await service.delete(principal, quotation_id)

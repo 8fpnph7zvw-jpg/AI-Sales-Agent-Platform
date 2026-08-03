@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+QuotationStatus = Literal["pending", "won", "lost", "cancelled"]
 
 
 class QuotationItemCreate(BaseModel):
@@ -82,7 +85,7 @@ class QuotationResponse(BaseModel):
     quotation_no: str
     customer_id: str
     conversation_id: str | None
-    status: str
+    status: QuotationStatus
     currency: str
     subtotal: Decimal
     discount_amount: Decimal
@@ -99,7 +102,7 @@ class QuotationListItem(BaseModel):
     quotation_no: str
     customer_id: str
     customer_name: str
-    status: str
+    status: QuotationStatus
     currency: str
     subtotal: Decimal
     discount_amount: Decimal
@@ -115,6 +118,15 @@ class QuotationListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class QuotationStatusUpdate(BaseModel):
+    status: QuotationStatus
+
+
+class QuotationStatusResponse(BaseModel):
+    id: str
+    status: QuotationStatus
 
 
 class ProductRead(BaseModel):

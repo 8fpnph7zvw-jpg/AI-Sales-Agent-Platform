@@ -158,6 +158,8 @@ export interface QuotationCreate {
   items: QuotationItemInput[];
 }
 
+export type QuotationStatus = "pending" | "won" | "lost" | "cancelled";
+
 export interface Quotation {
   id: string;
   quotation_no: string;
@@ -198,7 +200,7 @@ export interface Product {
   currency: string;
   base_price: string;
   min_order_qty: string | null;
-  status: string;
+  status: QuotationStatus;
   created_at: string;
 }
 

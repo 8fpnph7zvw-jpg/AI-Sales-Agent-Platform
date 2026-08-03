@@ -10,13 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.customer.customer import Customer
 from app.models.customer.customer_score import CustomerScore
 from app.modules.lead_score.repository import LeadScoreRepository
+from app.services.customer_category_service import CustomerCategoryService
 from app.services.dify_scoring_service import DifyScoringInput, DifyScoringService
 from app.services.feishu_service import FeishuService
 
 logger = logging.getLogger(__name__)
-
-CUSTOMER_CATEGORY_PREFIX = "customer-category:"
-
 
 class LeadScoringOrchestrator:
     def __init__(
@@ -30,6 +28,7 @@ class LeadScoringOrchestrator:
         self.repository = repository
         self.dify = dify
         self.feishu = feishu
+        self.customer_category = CustomerCategoryService()
 
     async def score_customer(
         self,
@@ -41,6 +40,11 @@ class LeadScoringOrchestrator:
         messages = await self.repository.recent_messages(customer.tenant_id, customer.id)
         chat_history = "\n".join(
             f"{message.sender_type}: {message.content_text or ''}" for message in messages
+        )
+        customer_history = "\n".join(
+            message.content_text or ""
+            for message in messages
+            if message.sender_type == "customer"
         )
         last_customer_message = next(
             (
@@ -87,14 +91,20 @@ class LeadScoringOrchestrator:
             "need_follow": result.need_follow,
             "reason": result.reason,
         }
-        customer.tags = [
-            tag
-            for tag in (customer.tags or [])
-            if not tag.startswith(CUSTOMER_CATEGORY_PREFIX)
-        ]
-        customer.tags.append(
-            f"{CUSTOMER_CATEGORY_PREFIX}{self._customer_category(result.score)}"
+        self.customer_category.update_customer_category(
+            customer,
+            source="scoring",
+            conversation_history=customer_history,
         )
+        if last_customer_message:
+            self.customer_category.update_customer_category(
+                customer,
+                source="repeat_inquiry",
+                has_won_history=await self.repository.has_won_quotation(
+                    customer.tenant_id,
+                    customer.id,
+                ),
+            )
         await self.session.commit()
         await self.session.refresh(score)
 
@@ -120,14 +130,6 @@ class LeadScoringOrchestrator:
                         customer.public_id,
                     )
         return score
-
-    @staticmethod
-    def _customer_category(score: int) -> str:
-        if score >= 70:
-            return "高意向客户"
-        if score >= 31:
-            return "重点跟进"
-        return "潜在客户"
 
     @staticmethod
     def _infer_quantity(message: str) -> str:

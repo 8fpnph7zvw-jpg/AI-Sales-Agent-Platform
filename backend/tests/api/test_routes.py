@@ -35,6 +35,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/users/{user_id}", "delete"),
     ("/api/v1/quotation", "post"),
     ("/api/v1/quotations", "get"),
+    ("/api/v1/quotations/{quotation_id}/status", "patch"),
+    ("/api/v1/quotations/{quotation_id}", "delete"),
     ("/api/v1/products", "get"),
     ("/api/v1/connectors", "get"),
     ("/api/v1/connectors/config", "post"),

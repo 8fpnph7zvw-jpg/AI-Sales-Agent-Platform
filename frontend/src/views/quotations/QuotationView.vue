@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { Delete, Plus } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 
 import { getApiErrorMessage } from "@/api/client";
 import { getCustomers } from "@/api/customers";
-import { createQuotation, getProducts, getQuotations } from "@/api/quotations";
+import {
+  createQuotation,
+  deleteQuotation,
+  getProducts,
+  getQuotations,
+  updateQuotationStatus,
+} from "@/api/quotations";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
 import type {
@@ -14,6 +20,7 @@ import type {
   Quotation,
   QuotationCreate,
   QuotationItemInput,
+  QuotationStatus,
 } from "@/types/business";
 import { formatDateTime, formatMoney } from "@/utils/format";
 
@@ -25,7 +32,15 @@ const customers = ref<Customer[]>([]);
 const products = ref<Product[]>([]);
 const total = ref(0);
 const drawerVisible = ref(false);
+const changingStatusId = ref("");
+const deletingId = ref("");
 const query = reactive({ page: 1, limit: 20, status: "" });
+const quotationStatusOptions = [
+  { value: "pending", label: "待跟进", type: "warning" },
+  { value: "won", label: "成交", type: "success" },
+  { value: "lost", label: "失效", type: "info" },
+  { value: "cancelled", label: "取消", type: "danger" },
+] as const;
 const form = reactive<QuotationCreate>({
   customer_id: "",
   currency: "USD",
@@ -124,12 +139,60 @@ async function submit(): Promise<void> {
   }
 }
 
+function statusOption(status: string) {
+  return quotationStatusOptions.find((option) => option.value === status)
+    || quotationStatusOptions[0];
+}
+
+async function changeQuotationStatus(
+  quotation: Quotation,
+  status: QuotationStatus,
+): Promise<void> {
+  if (quotation.status === status) return;
+  changingStatusId.value = quotation.id;
+  try {
+    const result = await updateQuotationStatus(quotation.id, status);
+    quotation.status = result.status;
+    ElMessage.success("报价状态已更新");
+  } catch (errorValue) {
+    ElMessage.error(getApiErrorMessage(errorValue));
+  } finally {
+    changingStatusId.value = "";
+  }
+}
+
+async function removeQuotation(quotation: Quotation): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除报价单 ${quotation.quotation_no}？删除后不会影响客户及成交分类。`,
+      "删除报价",
+      {
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+  deletingId.value = quotation.id;
+  try {
+    await deleteQuotation(quotation.id);
+    ElMessage.success("报价单已删除");
+    await load();
+  } catch (errorValue) {
+    ElMessage.error(getApiErrorMessage(errorValue));
+  } finally {
+    deletingId.value = "";
+  }
+}
+
 onMounted(load);
 </script>
 
 <template>
   <div>
-    <PageHeader title="报价管理" description="集中管理销售报价及审批状态">
+    <PageHeader title="报价管理" description="集中管理销售报价、跟进及成交状态">
       <el-button v-permission="'quotation.create'" type="primary" :icon="Plus" @click="openCreate">创建报价</el-button>
     </PageHeader>
     <el-card shadow="never" class="content-card">
@@ -157,10 +220,12 @@ onMounted(load);
     <el-card shadow="never" class="content-card">
       <div class="filter-bar">
         <el-select v-model="query.status" clearable placeholder="报价状态" @change="load">
-          <el-option label="草稿" value="draft" />
-          <el-option label="待审批" value="pending_approval" />
-          <el-option label="已批准" value="approved" />
-          <el-option label="已发送" value="sent" />
+          <el-option
+            v-for="option in quotationStatusOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
         </el-select>
         <el-button @click="load">刷新</el-button>
       </div>
@@ -174,11 +239,46 @@ onMounted(load);
             <template #default="{ row }: { row: Quotation }"><strong>{{ formatMoney(row.total_amount, row.currency) }}</strong></template>
           </el-table-column>
           <el-table-column label="状态" width="130">
-            <template #default="{ row }: { row: Quotation }"><el-tag effect="plain">{{ row.status }}</el-tag></template>
+            <template #default="{ row }: { row: Quotation }">
+              <el-tag :type="statusOption(row.status).type" effect="plain">
+                {{ statusOption(row.status).label }}
+              </el-tag>
+            </template>
           </el-table-column>
           <el-table-column prop="valid_until" label="有效期至" width="130" />
           <el-table-column label="创建时间" width="180">
             <template #default="{ row }: { row: Quotation }">{{ formatDateTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="250" fixed="right">
+            <template #default="{ row }: { row: Quotation }">
+              <div class="table-actions">
+                <el-select
+                  v-permission="'quotation.update_own'"
+                  :model-value="row.status"
+                  size="small"
+                  :loading="changingStatusId === row.id"
+                  style="width: 120px"
+                  @change="changeQuotationStatus(row, $event)"
+                >
+                  <el-option
+                    v-for="option in quotationStatusOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <el-button
+                  v-permission="'quotation.update_own'"
+                  type="danger"
+                  text
+                  :icon="Delete"
+                  :loading="deletingId === row.id"
+                  @click="removeQuotation(row)"
+                >
+                  删除
+                </el-button>
+              </div>
+            </template>
           </el-table-column>
         </el-table>
       </ApiState>
@@ -255,8 +355,16 @@ onMounted(load);
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">创建草稿</el-button>
+        <el-button type="primary" :loading="saving" @click="submit">创建报价</el-button>
       </template>
     </el-drawer>
   </div>
 </template>
+
+<style scoped>
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+</style>

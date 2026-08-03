@@ -32,6 +32,43 @@ class QuotationRepository:
         )
         return await self.session.scalar(statement)
 
+    async def get_quotation_with_customer(
+        self,
+        tenant_id: int,
+        public_id: str,
+        *,
+        for_update: bool = False,
+    ) -> tuple[Quotation, Customer] | None:
+        statement = (
+            select(Quotation, Customer)
+            .join(Customer, Customer.id == Quotation.customer_id)
+            .where(
+                Quotation.tenant_id == tenant_id,
+                Quotation.public_id == public_id,
+                Quotation.deleted_at.is_(None),
+            )
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        row = (await self.session.execute(statement)).one_or_none()
+        return (row[0], row[1]) if row else None
+
+    async def has_won_quotation(
+        self,
+        tenant_id: int,
+        customer_id: int,
+        *,
+        exclude_quotation_id: int | None = None,
+    ) -> bool:
+        statement = select(Quotation.id).where(
+            Quotation.tenant_id == tenant_id,
+            Quotation.customer_id == customer_id,
+            Quotation.status == "won",
+        )
+        if exclude_quotation_id is not None:
+            statement = statement.where(Quotation.id != exclude_quotation_id)
+        return await self.session.scalar(statement.limit(1)) is not None
+
     async def get_products(
         self,
         tenant_id: int,
@@ -60,7 +97,10 @@ class QuotationRepository:
         status: str | None,
         created_by: int | None,
     ) -> tuple[list[tuple[Quotation, Customer]], int]:
-        filters = [Quotation.tenant_id == tenant_id]
+        filters = [
+            Quotation.tenant_id == tenant_id,
+            Quotation.deleted_at.is_(None),
+        ]
         if status:
             filters.append(Quotation.status == status)
         if created_by is not None:

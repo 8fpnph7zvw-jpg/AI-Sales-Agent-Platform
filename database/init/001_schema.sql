@@ -680,7 +680,7 @@ CREATE TABLE quotations (
     quotation_no VARCHAR(64) NOT NULL,
     customer_id BIGINT UNSIGNED NOT NULL,
     conversation_id BIGINT UNSIGNED NULL,
-    status VARCHAR(24) NOT NULL DEFAULT 'draft',
+    status VARCHAR(24) NOT NULL DEFAULT 'pending',
     currency CHAR(3) NOT NULL,
     subtotal DECIMAL(19,4) NOT NULL DEFAULT 0,
     discount_amount DECIMAL(19,4) NOT NULL DEFAULT 0,
@@ -699,12 +699,12 @@ CREATE TABLE quotations (
     version INT UNSIGNED NOT NULL DEFAULT 1,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    deleted_at DATETIME(6) NULL,
     CONSTRAINT pk_quotations PRIMARY KEY (id),
     CONSTRAINT uq_quotations_public_id UNIQUE (public_id),
     CONSTRAINT tenant_number UNIQUE (tenant_id, quotation_no),
     CONSTRAINT ck_quotations_status_allowed
-        CHECK (status IN ('draft', 'pending_approval', 'approved', 'sent', 'accepted',
-                          'rejected', 'expired', 'cancelled')),
+        CHECK (status IN ('pending', 'won', 'lost', 'cancelled')),
     CONSTRAINT fk_quotations_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT,
     CONSTRAINT fk_quotations_customer_id_customers
@@ -716,6 +716,7 @@ CREATE TABLE quotations (
     CONSTRAINT fk_quotations_approved_by_users
         FOREIGN KEY (approved_by) REFERENCES users (id) ON DELETE SET NULL,
     INDEX ix_quotations_tenant_status_created (tenant_id, status, created_at),
+    INDEX ix_quotations_tenant_deleted_created (tenant_id, deleted_at, created_at),
     INDEX ix_quotations_customer (customer_id, created_at),
     INDEX ix_quotations_conversation_id (conversation_id),
     INDEX ix_quotations_created_by (created_by),

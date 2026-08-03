@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,10 @@ from app.modules.quotation.schemas import (
     QuotationListItem,
     QuotationListResponse,
     QuotationResponse,
+    QuotationStatusResponse,
+    QuotationStatusUpdate,
 )
+from app.services.customer_category_service import CustomerCategoryService
 
 MONEY = Decimal("0.0001")
 HUNDRED = Decimal("100")
@@ -34,6 +38,7 @@ class QuotationService:
     ) -> None:
         self.session = session
         self.repository = repository
+        self.customer_category = CustomerCategoryService()
 
     async def list_quotations(
         self,
@@ -157,7 +162,7 @@ class QuotationService:
             quotation_no=f"Q-{quotation_public_id[-12:]}",
             customer_id=customer.id,
             conversation_id=conversation.id if conversation else None,
-            status="draft",
+            status="pending",
             currency=payload.currency,
             valid_until=payload.valid_until,
             incoterm=payload.incoterm,
@@ -235,6 +240,15 @@ class QuotationService:
             + quotation.tax_amount
             + quotation.shipping_amount
         )
+        has_won_history = await self.repository.has_won_quotation(
+            principal.tenant_id,
+            customer.id,
+        )
+        self.customer_category.update_customer_category(
+            customer,
+            source="quotation_created",
+            has_won_history=has_won_history,
+        )
         self.repository.add(quotation)
         await self.session.commit()
         await self.session.refresh(quotation)
@@ -254,6 +268,62 @@ class QuotationService:
             items=response_items,
             created_at=quotation.created_at,
         )
+
+    async def update_status(
+        self,
+        principal: Principal,
+        quotation_id: str,
+        payload: QuotationStatusUpdate,
+    ) -> QuotationStatusResponse:
+        context = await self.repository.get_quotation_with_customer(
+            principal.tenant_id,
+            quotation_id,
+            for_update=True,
+        )
+        if context is None:
+            raise ResourceNotFoundError("Quotation")
+        quotation, customer = context
+        self._ensure_can_update(principal, quotation)
+        if payload.status == "won":
+            has_won_history = await self.repository.has_won_quotation(
+                principal.tenant_id,
+                customer.id,
+                exclude_quotation_id=quotation.id,
+            )
+            self.customer_category.update_customer_category(
+                customer,
+                source="quotation_won",
+                has_won_history=has_won_history,
+            )
+        quotation.status = payload.status
+        await self.session.commit()
+        await self.session.refresh(quotation)
+        return QuotationStatusResponse(id=quotation.public_id, status=quotation.status)
+
+    async def delete(
+        self,
+        principal: Principal,
+        quotation_id: str,
+    ) -> None:
+        context = await self.repository.get_quotation_with_customer(
+            principal.tenant_id,
+            quotation_id,
+            for_update=True,
+        )
+        if context is None:
+            raise ResourceNotFoundError("Quotation")
+        quotation, _customer = context
+        self._ensure_can_update(principal, quotation)
+        quotation.deleted_at = datetime.now(UTC)
+        await self.session.commit()
+
+    @staticmethod
+    def _ensure_can_update(principal: Principal, quotation: Quotation) -> None:
+        if (
+            "quotation.read_all" not in principal.permissions
+            and quotation.created_by != principal.user_id
+        ):
+            raise ResourceNotFoundError("Quotation")
 
     def _item_values(
         self,

@@ -22,6 +22,7 @@ from app.db.base import (
     Base,
     BigIntPrimaryKeyMixin,
     PublicIdMixin,
+    SoftDeleteMixin,
     TimestampMixin,
     VersionMixin,
 )
@@ -32,6 +33,7 @@ class Quotation(
     BigIntPrimaryKeyMixin,
     PublicIdMixin,
     TimestampMixin,
+    SoftDeleteMixin,
     VersionMixin,
     Base,
 ):
@@ -39,8 +41,7 @@ class Quotation(
     __table_args__ = (
         UniqueConstraint("tenant_id", "quotation_no", name="tenant_number"),
         CheckConstraint(
-            "status IN ('draft','pending_approval','approved','sent','accepted',"
-            "'rejected','expired','cancelled')",
+            "status IN ('pending','won','lost','cancelled')",
             name="status_allowed",
         ),
         Index("ix_quotations_tenant_status_created", "tenant_id", "status", "created_at"),
@@ -63,7 +64,7 @@ class Quotation(
         ForeignKey("conversations.id", ondelete="SET NULL"),
     )
     status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="draft", server_default="draft"
+        String(24), nullable=False, default="pending", server_default="pending"
     )
     currency: Mapped[str] = mapped_column(mysql.CHAR(3), nullable=False)
     subtotal: Mapped[Decimal] = mapped_column(

@@ -7,6 +7,7 @@ from app.models.auth.sales_profile import SalesProfile
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
 from app.models.customer.customer_score import CustomerScore
+from app.models.quotation.quotation import Quotation
 
 
 class LeadScoreRepository:
@@ -78,6 +79,20 @@ class LeadScoreRepository:
                 SalesProfile.tenant_id == tenant_id,
                 SalesProfile.user_id == user_id,
             )
+        )
+
+    async def has_won_quotation(self, tenant_id: int, customer_id: int) -> bool:
+        return (
+            await self.session.scalar(
+                select(Quotation.id)
+                .where(
+                    Quotation.tenant_id == tenant_id,
+                    Quotation.customer_id == customer_id,
+                    Quotation.status == "won",
+                )
+                .limit(1)
+            )
+            is not None
         )
 
     async def list_scores(

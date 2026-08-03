@@ -27,19 +27,33 @@ class FakeSession:
 
 
 class FakeRepository:
-    def __init__(self) -> None:
+    def __init__(self, *, has_won_history: bool = False) -> None:
         self.scores: list[Any] = []
+        self.has_won_history = has_won_history
 
     async def recent_messages(self, tenant_id: int, customer_id: int) -> list[Any]:
         assert tenant_id == 1
         assert customer_id == 42
-        return [SimpleNamespace(sender_type="customer", content_text="Need 1000 jackets")]
+        return [
+            SimpleNamespace(sender_type="customer", content_text="How much this hat?"),
+            SimpleNamespace(
+                sender_type="ai",
+                content_text=(
+                    "Please provide 1000 pcs hats, ship to USA, and request a quotation."
+                ),
+            ),
+        ]
 
     def add_score(self, score: Any) -> None:
         self.scores.append(score)
 
     async def sales_profile(self, tenant_id: int, user_id: int) -> None:
         raise AssertionError(f"Unexpected sales profile lookup: {tenant_id=} {user_id=}")
+
+    async def has_won_quotation(self, tenant_id: int, customer_id: int) -> bool:
+        assert tenant_id == 1
+        assert customer_id == 42
+        return self.has_won_history
 
 
 class FakeDifyScoring:
@@ -81,20 +95,19 @@ def make_customer() -> Customer:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("score", "expected_level", "expected_category"),
+    ("score", "expected_level"),
     [
-        (100, "A", "高意向客户"),
-        (70, "A", "高意向客户"),
-        (69, "B", "重点跟进"),
-        (31, "B", "重点跟进"),
-        (30, "C", "潜在客户"),
-        (0, "C", "潜在客户"),
+        (100, "A"),
+        (70, "A"),
+        (69, "B"),
+        (31, "B"),
+        (30, "C"),
+        (0, "C"),
     ],
 )
-async def test_successful_score_replaces_customer_category_tag(
+async def test_successful_score_updates_intent_without_promoting_incomplete_customer(
     score: int,
     expected_level: str,
-    expected_category: str,
 ) -> None:
     session = FakeSession()
     repository = FakeRepository()
@@ -111,7 +124,7 @@ async def test_successful_score_replaces_customer_category_tag(
     assert customer.tags == [
         "whatsapp",
         "vip",
-        f"customer-category:{expected_category}",
+        "customer-category:lead",
     ]
     assert customer.intent_score == Decimal(score)
     assert customer.intent_level == expected_level

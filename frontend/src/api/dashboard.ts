@@ -110,9 +110,7 @@ export async function getDashboardInsights(): Promise<DashboardInsights> {
     pending_follow_up: customers.filter((customer) =>
       ["new", "lead", "qualified", "follow_up"].includes(customer.lifecycle_stage),
     ).length,
-    won_opportunities: quotations.filter((quotation) =>
-      ["approved", "accepted", "won"].includes(quotation.status),
-    ).length,
+    won_opportunities: quotations.filter((quotation) => quotation.status === "won").length,
     identified_customers_today: new Set(inboundToday.map((message) => message.conversation_id)).size,
     high_intent_customers: customers.filter((customer) =>
       ["hot", "high"].includes(customer.intent_level || ""),
