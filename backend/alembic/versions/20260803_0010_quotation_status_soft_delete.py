@@ -20,7 +20,6 @@ def upgrade() -> None:
     columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("quotations")}
     if "deleted_at" in columns:
         return
-    op.drop_constraint("ck_quotations_status_allowed", "quotations", type_="check")
     op.execute(
         sa.text(
             """UPDATE quotations SET status = CASE
@@ -38,7 +37,7 @@ def upgrade() -> None:
         server_default="pending",
     )
     op.create_check_constraint(
-        "ck_quotations_status_allowed",
+        op.f("ck_quotations_status_allowed"),
         "quotations",
         "status IN ('pending','won','lost','cancelled')",
     )
@@ -53,7 +52,11 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_quotations_tenant_deleted_created", table_name="quotations")
     op.drop_column("quotations", "deleted_at")
-    op.drop_constraint("ck_quotations_status_allowed", "quotations", type_="check")
+    op.drop_constraint(
+        op.f("ck_quotations_status_allowed"),
+        "quotations",
+        type_="check",
+    )
     op.execute(
         sa.text(
             """UPDATE quotations SET status = CASE
@@ -71,7 +74,7 @@ def downgrade() -> None:
         server_default="draft",
     )
     op.create_check_constraint(
-        "ck_quotations_status_allowed",
+        op.f("ck_quotations_status_allowed"),
         "quotations",
         "status IN ('draft','pending_approval','approved','sent','accepted',"
         "'rejected','expired','cancelled')",
