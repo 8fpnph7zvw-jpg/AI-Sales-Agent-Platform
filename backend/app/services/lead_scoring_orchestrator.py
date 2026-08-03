@@ -15,6 +15,8 @@ from app.services.feishu_service import FeishuService
 
 logger = logging.getLogger(__name__)
 
+CUSTOMER_CATEGORY_PREFIX = "customer-category:"
+
 
 class LeadScoringOrchestrator:
     def __init__(
@@ -85,6 +87,14 @@ class LeadScoringOrchestrator:
             "need_follow": result.need_follow,
             "reason": result.reason,
         }
+        customer.tags = [
+            tag
+            for tag in (customer.tags or [])
+            if not tag.startswith(CUSTOMER_CATEGORY_PREFIX)
+        ]
+        customer.tags.append(
+            f"{CUSTOMER_CATEGORY_PREFIX}{self._customer_category(result.score)}"
+        )
         await self.session.commit()
         await self.session.refresh(score)
 
@@ -110,6 +120,14 @@ class LeadScoringOrchestrator:
                         customer.public_id,
                     )
         return score
+
+    @staticmethod
+    def _customer_category(score: int) -> str:
+        if score >= 70:
+            return "高意向客户"
+        if score >= 31:
+            return "重点跟进"
+        return "潜在客户"
 
     @staticmethod
     def _infer_quantity(message: str) -> str:

@@ -915,11 +915,14 @@ class WhatsAppService:
             return
         try:
             await self.lead_scoring.score_customer(customer)
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "whatsapp_lead_scoring_failed tenant_id=%s customer_id=%s",
+                "whatsapp_lead_scoring_failed tenant_id=%s customer_id=%s "
+                "phone=%s exception=%s",
                 customer.tenant_id,
                 customer.public_id,
+                customer.phone_e164,
+                exc,
             )
 
     async def _create_inbound_context(
