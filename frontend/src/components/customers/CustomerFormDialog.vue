@@ -29,7 +29,7 @@ const form = reactive<CustomerCreate>({
   source_type: "",
   tags: [],
   notes: "",
-  lifecycle_stage: "lead",
+  lifecycle_stage: "potential",
 });
 const rules: FormRules = {
   name: [{ required: true, message: "请输入客户姓名", trigger: "blur" }],
@@ -52,7 +52,7 @@ watch(
       source_type: "",
       tags: [],
       notes: "",
-      lifecycle_stage: "lead",
+      lifecycle_stage: "potential",
     });
   },
 );

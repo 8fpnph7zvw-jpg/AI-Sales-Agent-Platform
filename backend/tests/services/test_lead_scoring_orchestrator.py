@@ -4,6 +4,7 @@ import logging
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -71,6 +72,18 @@ class FakeDifyScoring:
         )
 
 
+class FollowUpDifyScoring:
+    configured = True
+
+    async def run(self, _scoring_input: Any) -> DifyScoreOutput:
+        return DifyScoreOutput(
+            score=85,
+            level="A",
+            need_follow=True,
+            reason="Complete purchasing context",
+        )
+
+
 class FakeFeishu:
     async def send_message(self, *_args: Any) -> None:
         raise AssertionError("Feishu notification should not be sent")
@@ -124,13 +137,44 @@ async def test_successful_score_updates_intent_without_promoting_incomplete_cust
     assert customer.tags == [
         "whatsapp",
         "vip",
-        "customer-category:lead",
+        "customer-category:potential",
     ]
     assert customer.intent_score == Decimal(score)
     assert customer.intent_level == expected_level
     assert result is repository.scores[0]
     assert session.commit_count == 1
     assert session.refreshed is result
+
+
+@pytest.mark.asyncio
+async def test_score_customer_triggers_customer_category_service(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = FakeSession()
+    repository = FakeRepository()
+    customer = make_customer()
+    orchestrator = LeadScoringOrchestrator(
+        session,  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        FollowUpDifyScoring(),  # type: ignore[arg-type]
+        FakeFeishu(),  # type: ignore[arg-type]
+    )
+    category_service = Mock()
+    category_service.update_customer_category.return_value = "potential"
+    orchestrator.customer_category = category_service
+    caplog.set_level(logging.INFO)
+
+    await orchestrator.score_customer(customer)
+
+    assert call(
+        customer,
+        source="scoring",
+        conversation_history="How much this hat?",
+    ) in category_service.update_customer_category.call_args_list
+    assert customer.intent_score == Decimal(85)
+    assert customer.intent_level == "A"
+    assert "category_update_started customer_id=42 score=85 level=A need_follow=True" in caplog.text
+    assert "customer_requested_quote=False" in caplog.text
 
 
 class FailingLeadScoring:

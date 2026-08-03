@@ -91,6 +91,31 @@ class LeadScoringOrchestrator:
             "need_follow": result.need_follow,
             "reason": result.reason,
         }
+        normalized_customer_history = " ".join(customer_history.lower().split())
+        inferred_quantity = quantity or self._infer_quantity(customer_history)
+        inferred_country = customer.country_code or (
+            "detected_from_conversation"
+            if CustomerCategoryService._has_country(normalized_customer_history, None)
+            else ""
+        )
+        shipping_method = self._infer_shipping_method(customer_history)
+        customer_requested_quote = CustomerCategoryService._has_quotation_request(
+            normalized_customer_history
+        )
+        logger.info(
+            "category_update_started customer_id=%s score=%s level=%s need_follow=%s "
+            "product=%s quantity=%s country=%s shipping_method=%s "
+            "customer_requested_quote=%s",
+            customer.id,
+            result.score,
+            result.level,
+            result.need_follow,
+            product[:500],
+            inferred_quantity,
+            inferred_country,
+            shipping_method,
+            customer_requested_quote,
+        )
         self.customer_category.update_customer_category(
             customer,
             source="scoring",
@@ -139,6 +164,23 @@ class LeadScoringOrchestrator:
             flags=re.IGNORECASE,
         )
         return match.group(0) if match else ""
+
+    @staticmethod
+    def _infer_shipping_method(history: str) -> str:
+        match = re.search(
+            r"\b(?:by sea|sea freight|ocean|by air|air freight|"
+            r"dhl|fedex|ups|express)\b",
+            history,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return match.group(0)
+        normalized = " ".join(history.lower().split())
+        return (
+            "detected_from_conversation"
+            if CustomerCategoryService._has_shipping(normalized)
+            else ""
+        )
 
     @staticmethod
     def _notification_text(

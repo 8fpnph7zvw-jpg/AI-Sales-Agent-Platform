@@ -36,7 +36,7 @@ const ownerCustomer = ref<Customer | null>(null);
 const selectedOwnerId = ref<string | null>(null);
 const salesUsers = ref<SalesUser[]>([]);
 const deletingId = ref("");
-const editForm = reactive<{ lifecycle_stage: CustomerCategory }>({ lifecycle_stage: "lead" });
+const editForm = reactive<{ lifecycle_stage: CustomerCategory }>({ lifecycle_stage: "potential" });
 const query = reactive({
   page: 1,
   limit: 20,

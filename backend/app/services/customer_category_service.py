@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Literal
 
 from app.models.customer.customer import Customer
 
-CustomerCategory = Literal["lead", "follow_up", "quoted", "won", "vip"]
+logger = logging.getLogger(__name__)
+
+CustomerCategory = Literal["potential", "follow_up", "quoted", "customer", "vip"]
 CategoryUpdateSource = Literal[
     "scoring",
     "repeat_inquiry",
@@ -14,14 +17,16 @@ CategoryUpdateSource = Literal[
 ]
 
 CUSTOMER_CATEGORY_PREFIX = "customer-category:"
-PROTECTED_SCORING_CATEGORIES = frozenset({"quoted", "won", "vip"})
+PROTECTED_SCORING_CATEGORIES = frozenset({"quoted", "customer", "vip"})
 LEGACY_CATEGORY_ALIASES: dict[str, CustomerCategory] = {
-    "潜在客户": "lead",
+    "lead": "potential",
+    "won": "customer",
+    "潜在客户": "potential",
     "高意向客户": "follow_up",
     "重点跟进": "follow_up",
     "待跟进客户": "follow_up",
     "已报价客户": "quoted",
-    "已成交客户": "won",
+    "已成交客户": "customer",
     "VIP客户": "vip",
     "VIP 客户": "vip",
 }
@@ -39,23 +44,65 @@ class CustomerCategoryService:
         current = self.get_customer_category(customer)
         if source == "scoring":
             if current in PROTECTED_SCORING_CATEGORIES:
-                self._set_customer_category(customer, current)
-                return current
-            target: CustomerCategory = (
-                "follow_up"
-                if self._is_follow_up_ready(
-                    conversation_history,
-                    country_code=customer.country_code,
+                reason = {
+                    "quoted": "already_quoted",
+                    "customer": "already_customer",
+                    "vip": "already_vip",
+                }[current]
+                self._log_decision(
+                    "category_update_started",
+                    customer,
+                    old_category=current,
+                    new_category=current,
+                    reason=reason,
                 )
-                else "lead"
+                self._set_customer_category(customer, current)
+                self._log_decision(
+                    "category_update_skipped",
+                    customer,
+                    old_category=current,
+                    new_category=current,
+                    reason=reason,
+                )
+                return current
+
+            follow_up_ready = self._is_follow_up_ready(
+                conversation_history,
+                country_code=customer.country_code,
+            )
+            target: CustomerCategory = "follow_up" if follow_up_ready else "potential"
+            reason = (
+                "complete_purchase_context"
+                if follow_up_ready
+                else "incomplete_purchase_context"
             )
         elif source == "repeat_inquiry":
             target = "vip" if current == "vip" or has_won_history else current
+            reason = "historical_won" if has_won_history else "no_historical_win"
         elif source == "quotation_created":
-            target = "vip" if current in {"won", "vip"} or has_won_history else "quoted"
+            target = (
+                "vip" if current in {"customer", "vip"} or has_won_history else "quoted"
+            )
+            reason = "historical_won" if target == "vip" else "quotation_created"
         else:
-            target = "vip" if current == "vip" or has_won_history else "won"
+            target = "vip" if current == "vip" or has_won_history else "customer"
+            reason = "historical_won" if target == "vip" else "quotation_won"
+
+        self._log_decision(
+            "category_update_started",
+            customer,
+            old_category=current,
+            new_category=target,
+            reason=reason,
+        )
         self._set_customer_category(customer, target)
+        self._log_decision(
+            "category_updated",
+            customer,
+            old_category=current,
+            new_category=target,
+            reason=reason,
+        )
         return target
 
     @staticmethod
@@ -64,16 +111,16 @@ class CustomerCategoryService:
             if not tag.startswith(CUSTOMER_CATEGORY_PREFIX):
                 continue
             value = tag.removeprefix(CUSTOMER_CATEGORY_PREFIX).strip()
-            if value in {"lead", "follow_up", "quoted", "won", "vip"}:
+            if value in {"potential", "follow_up", "quoted", "customer", "vip"}:
                 return value  # type: ignore[return-value]
             if value in LEGACY_CATEGORY_ALIASES:
                 return LEGACY_CATEGORY_ALIASES[value]
         lifecycle_aliases: dict[str, CustomerCategory] = {
-            "new": "lead",
+            "new": "potential",
             "qualified": "quoted",
-            "customer": "won",
+            "customer": "customer",
         }
-        return lifecycle_aliases.get(customer.lifecycle_stage, "lead")
+        return lifecycle_aliases.get(customer.lifecycle_stage, "potential")
 
     @staticmethod
     def _set_customer_category(customer: Customer, category: CustomerCategory) -> None:
@@ -83,6 +130,24 @@ class CustomerCategoryService:
             if not tag.startswith(CUSTOMER_CATEGORY_PREFIX)
         ]
         customer.tags.append(f"{CUSTOMER_CATEGORY_PREFIX}{category}")
+
+    @staticmethod
+    def _log_decision(
+        event: str,
+        customer: Customer,
+        *,
+        old_category: CustomerCategory,
+        new_category: CustomerCategory,
+        reason: str,
+    ) -> None:
+        logger.info(
+            "%s customer_id=%s old_category=%s new_category=%s reason=%s",
+            event,
+            customer.public_id,
+            old_category,
+            new_category,
+            reason,
+        )
 
     @classmethod
     def _is_follow_up_ready(cls, history: str, *, country_code: str | None) -> bool:
@@ -122,7 +187,12 @@ class CustomerCategoryService:
                 r"(?:pcs?|pieces?|units?|sets?|boxes?|cartons?|kg|kgs|tons?)\b",
                 text,
             )
-            or re.search(r"\d[\d,]*(?:\.\d+)?\s*(?:件|个|套|箱|公斤|千克|吨)", text)
+            or re.search(
+                r"\b\d[\d,]*(?:\.\d+)?\s*"
+                r"(?:hats?|caps?|jackets?|coats?|shirts?|shoes?|bags?|dresses?)\b",
+                text,
+            )
+            or re.search(r"\d[\d,]*(?:\.\d+)?\s*(?:件|个|只|套|箱|公斤|千克|吨)", text)
         )
 
     @staticmethod
@@ -147,11 +217,11 @@ class CustomerCategoryService:
     def _has_shipping(text: str) -> bool:
         return bool(
             re.search(
-                r"\b(?:ship(?:ping)?\s+to|air freight|sea freight|by air|by sea|"
-                r"express|dhl|fedex|ups|fob|cif|ddp|exw|freight)\b",
+                r"\b(?:by sea|sea freight|ocean|by air|air freight|"
+                r"dhl|fedex|ups|express)\b",
                 text,
             )
-            or re.search(r"运输|发货|寄到|空运|海运|快递|物流|到岸|离岸", text)
+            or re.search(r"空运|海运|航空货运|海洋运输|DHL|FedEx|UPS|快递", text, re.I)
         )
 
     @staticmethod

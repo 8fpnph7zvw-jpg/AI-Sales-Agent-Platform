@@ -103,7 +103,7 @@ def make_principal() -> Principal:
     )
 
 
-def make_customer(category: str = "lead") -> Customer:
+def make_customer(category: str = "potential") -> Customer:
     return Customer(
         id=42,
         public_id="01J00000000000000000000042",
@@ -149,7 +149,7 @@ async def test_create_quotation_defaults_pending_and_marks_customer_quoted() -> 
 
 @pytest.mark.asyncio
 async def test_new_quotation_for_won_customer_marks_customer_vip() -> None:
-    customer = make_customer("won")
+    customer = make_customer("customer")
     repository = FakeQuotationRepository(customer, has_won_history=True)
     service = QuotationService(FakeSession(), repository)  # type: ignore[arg-type]
 
@@ -202,12 +202,12 @@ async def test_first_won_quotation_marks_customer_won() -> None:
     )
 
     assert response.status == "won"
-    assert customer.tags == ["whatsapp", "customer-category:won"]
+    assert customer.tags == ["whatsapp", "customer-category:customer"]
 
 
 @pytest.mark.asyncio
 async def test_soft_delete_preserves_customer_and_category() -> None:
-    customer = make_customer("won")
+    customer = make_customer("customer")
     quotation = Quotation(
         id=99,
         public_id="01J00000000000000000000099",
@@ -227,4 +227,4 @@ async def test_soft_delete_preserves_customer_and_category() -> None:
 
     assert quotation.deleted_at is not None
     assert quotation.status == "won"
-    assert customer.tags == ["whatsapp", "customer-category:won"]
+    assert customer.tags == ["whatsapp", "customer-category:customer"]
