@@ -190,6 +190,17 @@ export interface CustomerScore {
 
 export type CustomerScorePage = PageResult<CustomerScore>;
 
+export interface CustomerCurrentScore {
+  customer_id: string;
+  customer_name: string;
+  intent_score: string | null;
+  intent_level: string | null;
+  category: "potential" | "follow_up" | "quoted" | "customer" | "vip";
+  last_scored_at: string | null;
+}
+
+export type CustomerCurrentScorePage = PageResult<CustomerCurrentScore>;
+
 export interface Product {
   id: string;
   sku: string;

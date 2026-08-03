@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -132,6 +134,85 @@ class LeadScoreRepository:
             or 0
         )
         return rows, total
+
+    async def list_current_scores(
+        self,
+        tenant_id: int,
+        *,
+        owner_user_id: int | None,
+        customer_public_id: str | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[tuple[Customer, datetime | None]], int]:
+        latest_score = (
+            select(
+                CustomerScore.customer_id,
+                func.max(CustomerScore.created_time).label("last_scored_at"),
+            )
+            .where(CustomerScore.tenant_id == tenant_id)
+            .group_by(CustomerScore.customer_id)
+            .subquery()
+        )
+        filters = [
+            Customer.tenant_id == tenant_id,
+            Customer.deleted_at.is_(None),
+            Customer.intent_score.is_not(None),
+        ]
+        if owner_user_id is not None:
+            filters.append(Customer.owner_user_id == owner_user_id)
+        if customer_public_id:
+            filters.append(Customer.public_id == customer_public_id)
+        base = (
+            select(Customer, latest_score.c.last_scored_at)
+            .outerjoin(latest_score, latest_score.c.customer_id == Customer.id)
+            .where(*filters)
+        )
+        rows = list(
+            (
+                await self.session.execute(
+                    base.order_by(
+                        latest_score.c.last_scored_at.desc(),
+                        Customer.updated_at.desc(),
+                        Customer.id.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).tuples()
+        )
+        total = int(
+            (
+                await self.session.scalar(
+                    select(func.count(Customer.id))
+                    .outerjoin(latest_score, latest_score.c.customer_id == Customer.id)
+                    .where(*filters)
+                )
+            )
+            or 0
+        )
+        return rows, total
+
+    async def get_score_for_customer(
+        self,
+        tenant_id: int,
+        customer_public_id: str,
+        score_id: int,
+        *,
+        owner_user_id: int | None,
+    ) -> CustomerScore | None:
+        statement = (
+            select(CustomerScore)
+            .join(Customer, Customer.id == CustomerScore.customer_id)
+            .where(
+                CustomerScore.id == score_id,
+                CustomerScore.tenant_id == tenant_id,
+                Customer.public_id == customer_public_id,
+                Customer.deleted_at.is_(None),
+            )
+        )
+        if owner_user_id is not None:
+            statement = statement.where(Customer.owner_user_id == owner_user_id)
+        return await self.session.scalar(statement)
 
     def add_score(self, score: CustomerScore) -> None:
         self.session.add(score)

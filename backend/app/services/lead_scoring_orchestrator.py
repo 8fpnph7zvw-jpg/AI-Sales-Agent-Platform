@@ -91,8 +91,14 @@ class LeadScoringOrchestrator:
             "need_follow": result.need_follow,
             "reason": result.reason,
         }
-        normalized_customer_history = " ".join(customer_history.lower().split())
-        inferred_quantity = quantity or self._infer_quantity(customer_history)
+        category_history_parts = [customer_history]
+        if product_requirement:
+            category_history_parts.append(f"Product requirement: {product_requirement}")
+        if quantity:
+            category_history_parts.append(f"Quantity: {quantity}")
+        category_history = "\n".join(part for part in category_history_parts if part)
+        normalized_customer_history = " ".join(category_history.lower().split())
+        inferred_quantity = quantity or self._infer_quantity(category_history)
         inferred_country = customer.country_code or (
             "detected_from_conversation"
             if CustomerCategoryService._has_country(normalized_customer_history, None)
@@ -102,10 +108,24 @@ class LeadScoringOrchestrator:
         customer_requested_quote = CustomerCategoryService._has_quotation_request(
             normalized_customer_history
         )
+        category_signals = {
+            "product": CustomerCategoryService._has_product(normalized_customer_history),
+            "quantity": CustomerCategoryService._has_quantity(normalized_customer_history),
+            "country": CustomerCategoryService._has_country(
+                normalized_customer_history,
+                customer.country_code,
+            ),
+            "shipping_method": CustomerCategoryService._has_shipping(
+                normalized_customer_history
+            ),
+            "customer_requested_quote": customer_requested_quote,
+        }
+        missing_fields = [name for name, present in category_signals.items() if not present]
+        old_category = self.customer_category.get_customer_category(customer)
         logger.info(
             "category_update_started customer_id=%s score=%s level=%s need_follow=%s "
             "product=%s quantity=%s country=%s shipping_method=%s "
-            "customer_requested_quote=%s",
+            "customer_requested_quote=%s conversation_history=%s",
             customer.id,
             result.score,
             result.level,
@@ -115,14 +135,15 @@ class LeadScoringOrchestrator:
             inferred_country,
             shipping_method,
             customer_requested_quote,
+            category_history.replace("\n", "\\n")[:2000],
         )
-        self.customer_category.update_customer_category(
+        new_category = self.customer_category.update_customer_category(
             customer,
             source="scoring",
-            conversation_history=customer_history,
+            conversation_history=category_history,
         )
         if last_customer_message:
-            self.customer_category.update_customer_category(
+            new_category = self.customer_category.update_customer_category(
                 customer,
                 source="repeat_inquiry",
                 has_won_history=await self.repository.has_won_quotation(
@@ -130,6 +151,28 @@ class LeadScoringOrchestrator:
                     customer.id,
                 ),
             )
+        if old_category == new_category:
+            unchanged_reason = {
+                "quoted": "already_quoted",
+                "customer": "already_customer",
+                "vip": "already_vip",
+            }.get(old_category)
+            decision_reason = unchanged_reason or (
+                f"missing_fields={','.join(missing_fields)}"
+                if missing_fields
+                else "category_already_current"
+            )
+        else:
+            decision_reason = "category_changed"
+        logger.info(
+            "category_update_finished customer_id=%s old_category=%s new_category=%s "
+            "reason=%s missing_fields=%s",
+            customer.id,
+            old_category,
+            new_category,
+            decision_reason,
+            ",".join(missing_fields) or "none",
+        )
         await self.session.commit()
         await self.session.refresh(score)
 

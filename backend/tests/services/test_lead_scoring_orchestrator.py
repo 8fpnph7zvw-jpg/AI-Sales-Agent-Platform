@@ -28,15 +28,21 @@ class FakeSession:
 
 
 class FakeRepository:
-    def __init__(self, *, has_won_history: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        has_won_history: bool = False,
+        customer_message: str = "How much this hat?",
+    ) -> None:
         self.scores: list[Any] = []
         self.has_won_history = has_won_history
+        self.customer_message = customer_message
 
     async def recent_messages(self, tenant_id: int, customer_id: int) -> list[Any]:
         assert tenant_id == 1
         assert customer_id == 42
         return [
-            SimpleNamespace(sender_type="customer", content_text="How much this hat?"),
+            SimpleNamespace(sender_type="customer", content_text=self.customer_message),
             SimpleNamespace(
                 sender_type="ai",
                 content_text=(
@@ -160,6 +166,7 @@ async def test_score_customer_triggers_customer_category_service(
         FakeFeishu(),  # type: ignore[arg-type]
     )
     category_service = Mock()
+    category_service.get_customer_category.return_value = "potential"
     category_service.update_customer_category.return_value = "potential"
     orchestrator.customer_category = category_service
     caplog.set_level(logging.INFO)
@@ -174,7 +181,36 @@ async def test_score_customer_triggers_customer_category_service(
     assert customer.intent_score == Decimal(85)
     assert customer.intent_level == "A"
     assert "category_update_started customer_id=42 score=85 level=A need_follow=True" in caplog.text
+    assert "conversation_history=How much this hat?" in caplog.text
     assert "customer_requested_quote=False" in caplog.text
+    assert "category_update_finished customer_id=42 old_category=potential " in caplog.text
+    assert "new_category=potential" in caplog.text
+    assert "missing_fields=quantity,country,shipping_method,customer_requested_quote" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_complete_context_updates_category_after_scoring(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = FakeSession()
+    repository = FakeRepository(
+        customer_message="Need 1000 hats. Ship to USA. By sea. Please quote."
+    )
+    customer = make_customer()
+    orchestrator = LeadScoringOrchestrator(
+        session,  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        FollowUpDifyScoring(),  # type: ignore[arg-type]
+        FakeFeishu(),  # type: ignore[arg-type]
+    )
+    caplog.set_level(logging.INFO)
+
+    await orchestrator.score_customer(customer)
+
+    assert customer.tags == ["whatsapp", "vip", "customer-category:follow_up"]
+    assert "category_update_finished customer_id=42" in caplog.text
+    assert "new_category=follow_up" in caplog.text
+    assert "missing_fields=none" in caplog.text
 
 
 class FailingLeadScoring:

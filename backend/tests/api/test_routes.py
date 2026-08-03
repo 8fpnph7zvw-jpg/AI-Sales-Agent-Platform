@@ -28,6 +28,8 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/agent/chat", "post"),
     ("/api/v1/lead-score", "post"),
     ("/api/v1/lead-scores", "get"),
+    ("/api/v1/lead-scores/{customer_id}/history", "get"),
+    ("/api/v1/lead-scores/{customer_id}/history/{score_id}", "delete"),
     ("/api/v1/lead-scores/run", "post"),
     ("/api/v1/users", "get"),
     ("/api/v1/users", "post"),

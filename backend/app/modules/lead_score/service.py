@@ -8,11 +8,14 @@ from app.api.dependencies.auth import Principal
 from app.core.exceptions import ResourceNotFoundError
 from app.modules.lead_score.repository import LeadScoreRepository
 from app.modules.lead_score.schemas import (
+    CustomerCurrentScoreListResponse,
+    CustomerCurrentScoreRead,
     CustomerScoreListResponse,
     CustomerScoreRead,
     LeadScoreRequest,
     LeadScoreResponse,
 )
+from app.services.customer_category_service import CustomerCategoryService
 
 SCORING_VERSION = "rules-v1"
 WEIGHTS = {
@@ -107,6 +110,59 @@ class LeadScoreService:
             limit=limit,
             offset=offset,
         )
+
+    async def list_current_scores(
+        self,
+        principal: Principal,
+        *,
+        customer_id: str | None,
+        limit: int,
+        offset: int,
+    ) -> CustomerCurrentScoreListResponse:
+        rows, total = await self.repository.list_current_scores(
+            principal.tenant_id,
+            owner_user_id=(
+                None if "customer.read_all" in principal.permissions else principal.user_id
+            ),
+            customer_public_id=customer_id,
+            limit=limit,
+            offset=offset,
+        )
+        return CustomerCurrentScoreListResponse(
+            data=[
+                CustomerCurrentScoreRead(
+                    customer_id=customer.public_id,
+                    customer_name=customer.name,
+                    intent_score=customer.intent_score,
+                    intent_level=customer.intent_level,
+                    category=CustomerCategoryService.get_customer_category(customer),
+                    last_scored_at=last_scored_at,
+                )
+                for customer, last_scored_at in rows
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def delete_score_history(
+        self,
+        principal: Principal,
+        customer_id: str,
+        score_id: int,
+    ) -> None:
+        score = await self.repository.get_score_for_customer(
+            principal.tenant_id,
+            customer_id,
+            score_id,
+            owner_user_id=(
+                None if "customer.read_all" in principal.permissions else principal.user_id
+            ),
+        )
+        if score is None:
+            raise ResourceNotFoundError("Customer score")
+        await self.session.delete(score)
+        await self.session.commit()
 
     @staticmethod
     def _level(score: float) -> str:

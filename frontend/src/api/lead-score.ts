@@ -1,5 +1,10 @@
 import { apiClient } from "./client";
-import type { CustomerScore, CustomerScorePage, LeadScoreResult } from "@/types/business";
+import type {
+  CustomerCurrentScorePage,
+  CustomerScore,
+  CustomerScorePage,
+  LeadScoreResult,
+} from "@/types/business";
 
 export interface ScoreSignals {
   need_clarity: number;
@@ -24,9 +29,27 @@ export async function getLeadScores(params: {
   limit: number;
   offset: number;
   customer_id?: string;
-}): Promise<CustomerScorePage> {
-  const { data } = await apiClient.get<CustomerScorePage>("/lead-scores", { params });
+}): Promise<CustomerCurrentScorePage> {
+  const { data } = await apiClient.get<CustomerCurrentScorePage>("/lead-scores", { params });
   return data;
+}
+
+export async function getLeadScoreHistory(
+  customerId: string,
+  params: { limit: number; offset: number },
+): Promise<CustomerScorePage> {
+  const { data } = await apiClient.get<CustomerScorePage>(
+    `/lead-scores/${customerId}/history`,
+    { params },
+  );
+  return data;
+}
+
+export async function deleteLeadScoreHistory(
+  customerId: string,
+  scoreId: number,
+): Promise<void> {
+  await apiClient.delete(`/lead-scores/${customerId}/history/${scoreId}`);
 }
 
 export async function runLeadScoringWorkflow(payload: {

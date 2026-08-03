@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -45,6 +46,22 @@ class CustomerScoreRead(BaseModel):
 
 class CustomerScoreListResponse(BaseModel):
     data: list[CustomerScoreRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class CustomerCurrentScoreRead(BaseModel):
+    customer_id: str
+    customer_name: str
+    intent_score: Decimal | None
+    intent_level: str | None
+    category: str
+    last_scored_at: datetime | None
+
+
+class CustomerCurrentScoreListResponse(BaseModel):
+    data: list[CustomerCurrentScoreRead]
     total: int
     limit: int
     offset: int
