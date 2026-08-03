@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.customer.customer import Customer
 from app.models.customer.customer_score import CustomerScore
 from app.modules.lead_score.repository import LeadScoreRepository
+from app.modules.notification.service import NotificationService
 from app.services.customer_category_service import CustomerCategoryService
 from app.services.dify_scoring_service import DifyScoringInput, DifyScoringService
-from app.services.feishu_service import FeishuService
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,12 @@ class LeadScoringOrchestrator:
         session: AsyncSession,
         repository: LeadScoreRepository,
         dify: DifyScoringService,
-        feishu: FeishuService,
+        notification_service: NotificationService,
     ) -> None:
         self.session = session
         self.repository = repository
         self.dify = dify
-        self.feishu = feishu
+        self.notification_service = notification_service
         self.customer_category = CustomerCategoryService()
 
     async def score_customer(
@@ -181,7 +181,7 @@ class LeadScoringOrchestrator:
             )
             if profile and profile.feishu_open_id:
                 try:
-                    await self.feishu.send_message(
+                    await self.notification_service.notify_sales(
                         profile.feishu_open_id,
                         self._notification_text(
                             customer,
@@ -189,10 +189,12 @@ class LeadScoringOrchestrator:
                             quantity or self._infer_quantity(last_customer_message),
                             score,
                         ),
+                        customer_id=customer.public_id,
+                        user_id=str(customer.owner_user_id),
                     )
                 except Exception:
                     logger.exception(
-                        "feishu_high_intent_notification_failed tenant_id=%s customer_id=%s",
+                        "sales_notification_failed tenant_id=%s customer_id=%s",
                         customer.tenant_id,
                         customer.public_id,
                     )

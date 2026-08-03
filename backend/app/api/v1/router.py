@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.connectors.feishu.router import router as feishu_connector_router
 from app.connectors.whatsapp.webhook import gateway_router as whatsapp_gateway_router
 from app.connectors.whatsapp.webhook import management_router as whatsapp_management_router
 from app.connectors.whatsapp.webhook import send_router as whatsapp_send_router
@@ -27,6 +28,7 @@ api_router.include_router(ai_agent_router)
 api_router.include_router(lead_score_router)
 api_router.include_router(quotation_router)
 api_router.include_router(connector_router)
+api_router.include_router(feishu_connector_router)
 api_router.include_router(notification_router)
 api_router.include_router(knowledge_router)
 api_router.include_router(workflow_router)

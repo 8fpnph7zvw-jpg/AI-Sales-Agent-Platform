@@ -6,8 +6,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
-from app.core.exceptions import ResourceNotFoundError
+from app.core.exceptions import ResourceNotFoundError, ServiceConfigurationError
 from app.db.base import new_ulid
+from app.integrations.feishu.service import FeishuService
 from app.models.notification.notification import Notification
 from app.models.system.outbox_event import OutboxEvent
 from app.modules.notification.repository import NotificationRepository
@@ -17,17 +18,46 @@ from app.modules.notification.schemas import NotificationSendRequest, Notificati
 class NotificationService:
     def __init__(
         self,
-        session: AsyncSession,
-        repository: NotificationRepository,
+        session: AsyncSession | None,
+        repository: NotificationRepository | None,
+        feishu: FeishuService | None = None,
     ) -> None:
         self.session = session
         self.repository = repository
+        self.feishu = feishu
+
+    async def notify_sales(
+        self,
+        receiver_open_id: str,
+        content: str,
+        *,
+        customer_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Dispatch a sales alert through the first enabled channel.
+
+        Feishu is the first implementation. Email and SMS adapters can be
+        added here without changing lead scoring orchestration.
+        """
+        if self.feishu is None or not self.feishu.configured:
+            return False
+        await self.feishu.send_text_message(
+            receiver_open_id,
+            content,
+            customer_id=customer_id,
+            user_id=user_id,
+        )
+        return True
 
     async def send(
         self,
         principal: Principal,
         payload: NotificationSendRequest,
     ) -> NotificationSendResponse:
+        if self.session is None or self.repository is None:
+            raise ServiceConfigurationError(
+                "Persistent notification delivery is not configured."
+            )
         if payload.dedupe_key:
             existing = await self.repository.get_by_dedupe_key(
                 principal.tenant_id,

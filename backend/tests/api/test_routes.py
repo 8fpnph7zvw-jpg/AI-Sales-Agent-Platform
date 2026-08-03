@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.api.dependencies.auth import Principal, get_current_principal
+from app.connectors.feishu.router import get_feishu_service
 from app.core.config import get_settings
 from app.main import create_app
 from app.modules.ai_agent.router import get_ai_agent_service
@@ -41,6 +42,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/quotations/{quotation_id}", "delete"),
     ("/api/v1/products", "get"),
     ("/api/v1/connectors", "get"),
+    ("/api/v1/connectors/feishu/test", "post"),
     ("/api/v1/connectors/config", "post"),
     ("/api/v1/connectors/whatsapp/{connector_id}/config-status", "get"),
     ("/api/v1/connectors/whatsapp/{connector_id}/web-session/connect", "post"),
@@ -164,6 +166,40 @@ async def test_whatsapp_test_endpoint_requires_bearer_token() -> None:
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "AUTHENTICATION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_feishu_test_endpoint_calls_service() -> None:
+    app = create_app()
+    calls: list[tuple[str, str]] = []
+
+    class FakeFeishuService:
+        async def send_text_message(self, open_id: str, message: str) -> None:
+            calls.append((open_id, message))
+
+    async def principal_override() -> Principal:
+        return Principal(
+            user_id=1,
+            user_public_id="01ARZ3NDEKTSV4RRFFQ69G5FA3",
+            tenant_id=1,
+            tenant_public_id="01ARZ3NDEKTSV4RRFFQ69G5FA4",
+            permissions=frozenset({"connector.manage"}),
+        )
+
+    app.dependency_overrides[get_current_principal] = principal_override
+    app.dependency_overrides[get_feishu_service] = FakeFeishuService
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/v1/connectors/feishu/test",
+            json={"open_id": "ou_test_receiver", "message": "test message"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True}
+    assert calls == [("ou_test_receiver", "test message")]
 
 
 @pytest.mark.asyncio
