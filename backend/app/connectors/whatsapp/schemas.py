@@ -22,7 +22,7 @@ class WhatsAppSendRequest(BaseModel):
 
 
 class WhatsAppSendResponse(BaseModel):
-    message_id: str
+    message_id: str | None = None
 
 
 class WhatsAppTestRequest(BaseModel):

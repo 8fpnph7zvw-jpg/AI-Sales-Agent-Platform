@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 
 import pytest
 
@@ -235,3 +236,34 @@ async def test_webjs_gateway_send_calls_node_gateway(monkeypatch: pytest.MonkeyP
             "sessionId": "customer001",
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_webjs_gateway_accepts_sent_response_without_message_id(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    adapter = WhatsAppWebJsGatewayAdapter(gateway_config())
+
+    async def fake_request(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"messageId": None, "sent": True}
+
+    monkeypatch.setattr(adapter, "_request", fake_request)
+    caplog.set_level(logging.WARNING)
+    message = UnifiedMessageEnvelope(
+        idempotency_key="whatsapp:webjs:no-message-id",
+        tenant_id="tenant-1",
+        channel="whatsapp",
+        direction=Direction.OUTBOUND,
+        message_type=MessageType.TEXT,
+        conversation_id="conversation-1",
+        sender=Party(id="customer001"),
+        recipients=[Party(id="15551234567")],
+        content=TextContent(text="AI reply"),
+    )
+
+    result = await adapter.send(message)
+
+    assert result.accepted is True
+    assert result.provider_request_id is None
+    assert "Gateway sent message but no message ID returned." in caplog.text

@@ -264,6 +264,16 @@ class FlowDify:
         )
 
 
+class FlowLeadScoring:
+    dify = SimpleNamespace(configured=True)
+
+    def __init__(self) -> None:
+        self.customer_ids: list[int] = []
+
+    async def score_customer(self, customer: Customer) -> None:
+        self.customer_ids.append(customer.id)
+
+
 @pytest.mark.asyncio
 async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
     monkeypatch: pytest.MonkeyPatch,
@@ -290,6 +300,7 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
     repository = FlowRepository(connector, tenant)
     session = FlowSession(repository)
     dify = FlowDify()
+    lead_scoring = FlowLeadScoring()
     gateway_requests: list[tuple[str, str, dict[str, Any]]] = []
 
     async def fake_gateway_request(
@@ -328,7 +339,7 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
                 "message": "Dify sales reply",
                 "sessionId": "sales-web-01",
             }
-            return {"messageId": "webjs-outbound-1", "status": "SENT"}
+            return {"messageId": None, "sent": True, "status": "SENT"}
         raise AssertionError(f"Unexpected gateway request: {method} {path}")
 
     monkeypatch.setattr(WhatsAppWebJsGatewayAdapter, "_request", fake_gateway_request)
@@ -343,6 +354,7 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
         settings,
         FlowCipher({"adapter": "webjs_gateway", "session_id": "sales-web-01"}),
         dify,
+        lead_scoring,  # type: ignore[arg-type]
     )
     principal = Principal(
         user_id=20,
@@ -395,7 +407,8 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
     assert repository.conversation.assigned_user_id == 20
     outbound = next(message for message in repository.messages if message.direction == "outbound")
     assert outbound.status == "sent"
-    assert outbound.external_message_id == "webjs-outbound-1"
+    assert outbound.external_message_id is None
+    assert lead_scoring.customer_ids == [repository.customer.id]
     assert repository.webhook_log is not None
     assert repository.webhook_log.status == "processed"
     assert [path for _, path, _ in gateway_requests] == [
@@ -424,4 +437,5 @@ async def test_whatsapp_web_qr_connected_inbound_dify_and_outbound_flow(
     assert dify.conversation_ids == [None, "dify-conversation-1"]
     assert repository.customer.id == original_customer_id
     assert repository.customer.deleted_at is None
+    assert lead_scoring.customer_ids == [original_customer_id, original_customer_id]
     assert sum(isinstance(model, Customer) for model in session.models) == 1

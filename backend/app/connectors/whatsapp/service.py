@@ -528,7 +528,7 @@ class WhatsAppService:
             content=TextContent(text=text),
         )
         result = await runtime.adapter.send(envelope)
-        if not result.accepted or not result.provider_request_id:
+        if not result.accepted:
             raise ConflictError(
                 "WHATSAPP_SEND_REJECTED",
                 result.detail or "WhatsApp provider rejected the outbound message.",

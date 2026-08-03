@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -25,6 +26,8 @@ from app.schemas.protocol import (
 
 WEBJS_GATEWAY_REQUIRED_CONFIG_KEYS = ("session_id",)
 WEBJS_GATEWAY_SECRET_CONFIG_KEYS = frozenset()
+
+logger = logging.getLogger(__name__)
 
 
 @whatsapp_provider_registry.register("webjs_gateway")
@@ -195,10 +198,19 @@ class WhatsAppWebJsGatewayAdapter(WhatsAppProviderAdapter):
             },
         )
         message_id = str(data.get("messageId") or "") or None
+        status = str(data.get("status") or "").strip().upper()
+        accepted = bool(message_id) or data.get("sent") is True or status == "SENT"
+        if accepted and message_id is None:
+            logger.warning(
+                "Gateway sent message but no message ID returned. "
+                "session_id=%s status=%s",
+                self.session_id,
+                status or "none",
+            )
         return SendResult(
-            accepted=bool(message_id),
+            accepted=accepted,
             provider_request_id=message_id,
-            detail="accepted" if message_id else "Gateway returned no message ID.",
+            detail="accepted" if accepted else "Gateway did not confirm the message was sent.",
         )
 
     def verify_challenge(self, mode: str, token: str, challenge: str) -> str:
