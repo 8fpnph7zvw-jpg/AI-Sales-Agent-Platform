@@ -26,9 +26,18 @@ class User(
     __tablename__ = "users"
     __table_args__ = (
         UniqueConstraint("tenant_id", "email", name="tenant_email"),
+        UniqueConstraint(
+            "tenant_id",
+            "feishu_open_id",
+            name="uq_users_tenant_feishu_open_id",
+        ),
         CheckConstraint(
             "status IN ('invited','active','locked','disabled')",
             name="status_allowed",
+        ),
+        CheckConstraint(
+            "feishu_bind_status IN ('unbound','bound')",
+            name="feishu_bind_status_allowed",
         ),
         Index("ix_users_tenant_status", "tenant_id", "status"),
     )
@@ -54,6 +63,12 @@ class User(
         Boolean, nullable=False, default=False, server_default="0"
     )
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    feishu_open_id: Mapped[str | None] = mapped_column(String(128))
+    feishu_name: Mapped[str | None] = mapped_column(String(120))
+    feishu_bind_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unbound", server_default="unbound"
+    )
+    feishu_bind_time: Mapped[datetime | None] = mapped_column(UTCDateTime())
 
     tenant = relationship("Tenant", lazy="raise")
     role_links = relationship(

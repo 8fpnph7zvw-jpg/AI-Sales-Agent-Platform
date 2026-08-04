@@ -7,10 +7,10 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.connectors.feishu.service import FeishuConnectorService
 from app.models.customer.customer import Customer
 from app.models.customer.customer_score import CustomerScore
 from app.modules.lead_score.repository import LeadScoreRepository
-from app.modules.notification.service import NotificationService
 from app.services.customer_category_service import CustomerCategoryService
 from app.services.dify_scoring_service import DifyScoringInput, DifyScoringService
 
@@ -22,7 +22,7 @@ class LeadScoringOrchestrator:
         session: AsyncSession,
         repository: LeadScoreRepository,
         dify: DifyScoringService,
-        notification_service: NotificationService,
+        notification_service: FeishuConnectorService,
     ) -> None:
         self.session = session
         self.repository = repository
@@ -176,13 +176,25 @@ class LeadScoringOrchestrator:
         await self.session.refresh(score)
 
         if result.score >= 80 and result.need_follow and customer.owner_user_id:
-            profile = await self.repository.sales_profile(
+            owner = await self.repository.sales_user(
                 customer.tenant_id, customer.owner_user_id
             )
-            if profile and profile.feishu_open_id:
+            if (
+                owner is None
+                or owner.feishu_bind_status != "bound"
+                or not owner.feishu_open_id
+            ):
+                logger.info(
+                    "feishu_not_bound tenant_id=%s customer_id=%s owner_user_id=%s",
+                    customer.tenant_id,
+                    customer.public_id,
+                    customer.owner_user_id,
+                )
+            else:
                 try:
-                    await self.notification_service.notify_sales(
-                        profile.feishu_open_id,
+                    await self.notification_service.send_message(
+                        customer.tenant_id,
+                        owner.feishu_open_id,
                         self._notification_text(
                             customer,
                             product,

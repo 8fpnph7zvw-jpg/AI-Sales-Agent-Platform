@@ -33,10 +33,12 @@ class FakeRepository:
         *,
         has_won_history: bool = False,
         customer_message: str = "How much this hat?",
+        owner: Any = None,
     ) -> None:
         self.scores: list[Any] = []
         self.has_won_history = has_won_history
         self.customer_message = customer_message
+        self.owner = owner
 
     async def recent_messages(self, tenant_id: int, customer_id: int) -> list[Any]:
         assert tenant_id == 1
@@ -54,8 +56,10 @@ class FakeRepository:
     def add_score(self, score: Any) -> None:
         self.scores.append(score)
 
-    async def sales_profile(self, tenant_id: int, user_id: int) -> None:
-        raise AssertionError(f"Unexpected sales profile lookup: {tenant_id=} {user_id=}")
+    async def sales_user(self, tenant_id: int, user_id: int) -> Any:
+        assert tenant_id == 1
+        assert user_id == 7
+        return self.owner
 
     async def has_won_quotation(self, tenant_id: int, customer_id: int) -> bool:
         assert tenant_id == 1
@@ -93,6 +97,14 @@ class FollowUpDifyScoring:
 class FakeFeishu:
     async def send_message(self, *_args: Any) -> None:
         raise AssertionError("Feishu notification should not be sent")
+
+
+class RecordingFeishu:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, ...]] = []
+
+    async def send_message(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append((*args, kwargs))
 
 
 def make_customer() -> Customer:
@@ -212,6 +224,61 @@ async def test_complete_context_updates_category_after_scoring(
     assert "new_category=follow_up" in caplog.text
     assert "customer_requested_quote=False" in caplog.text
     assert "missing_fields=none" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_unbound_sales_owner_does_not_break_scoring(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repository = FakeRepository(
+        owner=SimpleNamespace(
+            feishu_bind_status="unbound",
+            feishu_open_id=None,
+        )
+    )
+    customer = make_customer()
+    customer.owner_user_id = 7
+    caplog.set_level(logging.INFO)
+
+    result = await LeadScoringOrchestrator(
+        FakeSession(),  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        FollowUpDifyScoring(),  # type: ignore[arg-type]
+        FakeFeishu(),  # type: ignore[arg-type]
+    ).score_customer(customer)
+
+    assert result.score == 85
+    assert "feishu_not_bound tenant_id=1" in caplog.text
+    assert "owner_user_id=7" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_bound_customer_owner_receives_feishu_notification() -> None:
+    repository = FakeRepository(
+        owner=SimpleNamespace(
+            feishu_bind_status="bound",
+            feishu_open_id="ou_sales_zhangsan",
+        )
+    )
+    customer = make_customer()
+    customer.owner_user_id = 7
+    feishu = RecordingFeishu()
+
+    await LeadScoringOrchestrator(
+        FakeSession(),  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        FollowUpDifyScoring(),  # type: ignore[arg-type]
+        feishu,  # type: ignore[arg-type]
+    ).score_customer(customer)
+
+    tenant_id, open_id, content, context = feishu.calls[0]
+    assert tenant_id == 1
+    assert open_id == "ou_sales_zhangsan"
+    assert "Test Customer" in content
+    assert context == {
+        "customer_id": "01J00000000000000000000000",
+        "user_id": "7",
+    }
 
 
 class FailingLeadScoring:

@@ -24,8 +24,18 @@ TOKEN_INVALID_CODES = frozenset({99991663, 99991668, 99991671})
 
 
 class FeishuClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        app_id: str | None = None,
+        app_secret: str | None = None,
+        enabled: bool | None = None,
+    ) -> None:
         self.settings = settings
+        self.app_id = settings.feishu_app_id if app_id is None else app_id
+        self.app_secret = settings.feishu_app_secret if app_secret is None else app_secret
+        self.enabled = settings.feishu_enabled if enabled is None else enabled
         self._tenant_access_token: str | None = None
         self._token_expires_at = 0.0
         self._token_lock = asyncio.Lock()
@@ -33,9 +43,9 @@ class FeishuClient:
     @property
     def configured(self) -> bool:
         return bool(
-            self.settings.feishu_enabled
-            and self.settings.feishu_app_id
-            and self.settings.feishu_app_secret
+            self.enabled
+            and self.app_id
+            and self.app_secret
         )
 
     async def get_tenant_access_token(self, *, force_refresh: bool = False) -> str:
@@ -46,29 +56,34 @@ class FeishuClient:
         async with self._token_lock:
             if not force_refresh and self._token_is_valid():
                 return self._tenant_access_token or ""
-            logger.info("feishu_token_refresh_started")
-            body = await self._post_json(
-                "open-apis/auth/v3/tenant_access_token/internal",
-                json_body={
-                    "app_id": self.settings.feishu_app_id,
-                    "app_secret": self.settings.feishu_app_secret,
-                },
-            )
+            logger.info("feishu_token_get_started")
             try:
+                body = await self._post_json(
+                    "open-apis/auth/v3/tenant_access_token/internal",
+                    json_body={
+                        "app_id": self.app_id,
+                        "app_secret": self.app_secret,
+                    },
+                )
                 token_response = FeishuTenantTokenResponse.model_validate(body)
+                if token_response.code != 0 or not token_response.tenant_access_token:
+                    raise FeishuAPIError(
+                        token_response.msg or "tenant access token request was rejected",
+                        error_code="FEISHU_TOKEN_REQUEST_FAILED",
+                    )
             except ValidationError as exc:
+                logger.exception("feishu_token_get_failed")
                 raise FeishuAPIError(
                     "tenant access token response was invalid",
                     error_code="FEISHU_TOKEN_RESPONSE_INVALID",
                 ) from exc
-            if token_response.code != 0 or not token_response.tenant_access_token:
-                raise FeishuAPIError(
-                    token_response.msg or "tenant access token request was rejected",
-                    error_code="FEISHU_TOKEN_REQUEST_FAILED",
-                )
+            except Exception:
+                logger.exception("feishu_token_get_failed")
+                raise
             lifetime = max(token_response.expire - TOKEN_REFRESH_SKEW_SECONDS, 1)
             self._tenant_access_token = token_response.tenant_access_token
             self._token_expires_at = time.monotonic() + lifetime
+            logger.info("feishu_token_get_success expires_in=%s", token_response.expire)
             return token_response.tenant_access_token
 
     async def send_text_message(

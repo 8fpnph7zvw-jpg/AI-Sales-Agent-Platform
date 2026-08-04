@@ -13,7 +13,6 @@ class SalesProfile(BigIntPrimaryKeyMixin, Base):
     __tablename__ = "sales_profiles"
     __table_args__ = (
         UniqueConstraint("user_id", name="user_id"),
-        UniqueConstraint("tenant_id", "feishu_open_id", name="tenant_feishu_open_id"),
         Index("ix_sales_profiles_tenant_name", "tenant_id", "sales_name"),
     )
 
@@ -28,7 +27,6 @@ class SalesProfile(BigIntPrimaryKeyMixin, Base):
         nullable=False,
     )
     sales_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    feishu_open_id: Mapped[str | None] = mapped_column(String(128))
     created_time: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         nullable=False,

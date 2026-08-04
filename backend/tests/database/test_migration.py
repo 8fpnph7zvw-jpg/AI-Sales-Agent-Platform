@@ -71,7 +71,7 @@ def _mock_quotation_upgrade(monkeypatch, *, check_constraints=()):
 def test_alembic_has_one_linear_head() -> None:
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["20260803_0010"]
+    assert scripts.get_heads() == ["20260804_0011"]
     assert scripts.get_base() == "20260724_0001"
 
 

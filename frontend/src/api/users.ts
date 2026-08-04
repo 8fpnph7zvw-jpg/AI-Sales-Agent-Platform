@@ -20,3 +20,10 @@ export async function deleteSalesUser(id: string): Promise<void> {
   await apiClient.delete(`/users/${id}`);
 }
 
+export async function updateFeishuBinding(
+  id: string,
+  payload: { feishu_open_id: string | null; feishu_name: string | null },
+): Promise<SalesUser> {
+  const { data } = await apiClient.patch<SalesUser>(`/users/${id}/feishu-binding`, payload);
+  return data;
+}

@@ -4,7 +4,10 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
+from app.connectors.feishu.repository import FeishuConnectorRepository
+from app.connectors.feishu.service import FeishuConnectorService
 from app.core.config import get_settings
+from app.core.encryption import ConfigCipher
 from app.core.exceptions import ResourceNotFoundError
 from app.db.session import get_db
 from app.modules.lead_score.repository import LeadScoreRepository
@@ -18,7 +21,6 @@ from app.modules.lead_score.schemas import (
 )
 from app.modules.lead_score.service import LeadScoreService
 from app.services.dify_scoring_service import DifyScoringService
-from app.services.feishu_service import FeishuService
 from app.services.lead_scoring_orchestrator import LeadScoringOrchestrator
 
 router = APIRouter(tags=["Lead Score"])
@@ -122,7 +124,12 @@ async def run_lead_scoring_workflow(
         session,
         repository,
         DifyScoringService(settings),
-        FeishuService(settings),
+        FeishuConnectorService(
+            session,
+            FeishuConnectorRepository(session),
+            ConfigCipher(settings),
+            settings,
+        ),
     ).score_customer(
         customer,
         product_requirement=payload.product_requirement,

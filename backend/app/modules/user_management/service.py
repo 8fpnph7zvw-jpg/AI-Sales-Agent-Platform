@@ -53,6 +53,7 @@ class UserManagementService:
             display_name=payload.display_name,
             status="active",
         )
+        self._set_feishu_binding(user, payload.feishu_open_id, payload.feishu_name)
         self.session.add(user)
         await self.session.flush()
         self.session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by=principal.user_id))
@@ -60,7 +61,6 @@ class UserManagementService:
             tenant_id=principal.tenant_id,
             user_id=user.id,
             sales_name=payload.sales_name,
-            feishu_open_id=payload.feishu_open_id or None,
         )
         self.session.add(profile)
         await self._commit_conflicts()
@@ -96,8 +96,28 @@ class UserManagementService:
             self.session.add(profile)
         if "sales_name" in values:
             profile.sales_name = values["sales_name"]
-        if "feishu_open_id" in values:
-            profile.feishu_open_id = values["feishu_open_id"] or None
+        if "feishu_open_id" in values or "feishu_name" in values:
+            self._set_feishu_binding(
+                user,
+                values.get("feishu_open_id", user.feishu_open_id),
+                values.get("feishu_name", user.feishu_name),
+            )
+        await self._commit_conflicts()
+        return self._read(user, profile, role)
+
+    async def update_feishu_binding(
+        self,
+        principal: Principal,
+        user_id: str,
+        feishu_open_id: str | None,
+        feishu_name: str | None,
+    ) -> SalesUserRead:
+        user = await self.repository.get(principal.tenant_id, user_id, for_update=True)
+        if user is None:
+            raise ResourceNotFoundError("User")
+        profile = await self.repository.profile(user.id)
+        role = await self.repository.role_code(user.id)
+        self._set_feishu_binding(user, feishu_open_id, feishu_name)
         await self._commit_conflicts()
         return self._read(user, profile, role)
 
@@ -132,8 +152,21 @@ class UserManagementService:
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError(
-                "SALES_PROFILE_CONFLICT", "Email or Feishu account is already bound."
+                "USER_BINDING_CONFLICT", "Email or Feishu account is already bound."
             ) from exc
+
+    @staticmethod
+    def _set_feishu_binding(
+        user: User,
+        feishu_open_id: str | None,
+        feishu_name: str | None,
+    ) -> None:
+        open_id = (feishu_open_id or "").strip() or None
+        name = (feishu_name or "").strip() or None
+        user.feishu_open_id = open_id
+        user.feishu_name = name if open_id else None
+        user.feishu_bind_status = "bound" if open_id else "unbound"
+        user.feishu_bind_time = datetime.now(UTC) if open_id else None
 
     @staticmethod
     def _read(user: User, profile: SalesProfile | None, role: str | None) -> SalesUserRead:
@@ -145,6 +178,9 @@ class UserManagementService:
             status=user.status,
             role="admin" if role == "owner" else (role or "sales"),
             sales_name=profile.sales_name if profile else None,
-            feishu_open_id=profile.feishu_open_id if profile else None,
+            feishu_open_id=user.feishu_open_id,
+            feishu_name=user.feishu_name,
+            feishu_bind_status=user.feishu_bind_status,
+            feishu_bind_time=user.feishu_bind_time,
             created_at=user.created_at,
         )

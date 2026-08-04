@@ -6,8 +6,10 @@ import { ElMessage } from "element-plus";
 import { getApiErrorMessage } from "@/api/client";
 import {
   configureConnector,
+  getFeishuConfigStatus,
   getConnectors,
   getWhatsAppConfigStatus,
+  testFeishuConnector,
   testWhatsAppConnector,
 } from "@/api/connectors";
 import { getUsers } from "@/api/users";
@@ -28,6 +30,7 @@ const loading = ref(false);
 const statusLoading = ref(false);
 const saving = ref(false);
 const testing = ref(false);
+const testingConnectorId = ref("");
 const ownerSaving = ref(false);
 const error = ref("");
 const rows = ref<Connector[]>([]);
@@ -47,7 +50,12 @@ const whatsappForm = reactive({
   verify_token: "",
   app_secret: "",
 });
+const feishuForm = reactive({
+  app_id: "",
+  app_secret: "",
+});
 const isWhatsApp = computed(() => selected.value?.provider === "whatsapp");
+const isFeishu = computed(() => selected.value?.provider === "feishu");
 const isWhatsAppWeb = computed(
   () => isWhatsApp.value && whatsappForm.adapter === "webjs_gateway",
 );
@@ -56,9 +64,13 @@ const capabilityLabels: Record<string, string> = {
   send_messages: "消息发送",
   delivery_receipts: "状态通知",
   webhooks: "Webhook",
+  notifications: "通知",
+  messages: "消息",
 };
 const statusLabels: Record<string, string> = {
   active: "已启用",
+  draft: "待测试",
+  error: "连接异常",
   inactive: "未启用",
   disabled: "已停用",
 };
@@ -73,7 +85,9 @@ function capabilityLabel(value: string): string {
 }
 
 function providerLabel(value: string): string {
-  return value === "whatsapp" ? "WhatsApp 商务渠道" : "企业消息渠道";
+  if (value === "whatsapp") return "WhatsApp 商务渠道";
+  if (value === "feishu") return "飞书企业通知渠道";
+  return "企业消息渠道";
 }
 
 async function load(): Promise<void> {
@@ -102,20 +116,25 @@ async function openConfig(row: Connector): Promise<void> {
     verify_token: "",
     app_secret: "",
   });
+  Object.assign(feishuForm, { app_id: "", app_secret: "" });
   genericConfigRows.splice(
     0,
     genericConfigRows.length,
     { key: "", value: "", value_type: "string", is_secret: true },
   );
   dialogVisible.value = true;
-  if (row.provider !== "whatsapp") return;
+  if (row.provider !== "whatsapp" && row.provider !== "feishu") return;
   statusLoading.value = true;
   try {
-    const status = await getWhatsAppConfigStatus(row.id);
+    const status = row.provider === "feishu"
+      ? await getFeishuConfigStatus(row.id)
+      : await getWhatsAppConfigStatus(row.id);
     configuredKeys.value = status.configured_keys;
-    webhookUrl.value = status.webhook_url;
-    whatsappForm.adapter = status.adapter === "webjs_gateway" ? "webjs_gateway" : "cloud_api";
-    defaultOwnerId.value = status.default_owner_id;
+    if (row.provider === "whatsapp" && "webhook_url" in status) {
+      webhookUrl.value = status.webhook_url;
+      whatsappForm.adapter = status.adapter === "webjs_gateway" ? "webjs_gateway" : "cloud_api";
+      defaultOwnerId.value = status.default_owner_id;
+    }
   } catch (requestError) {
     ElMessage.error(getApiErrorMessage(requestError));
   } finally {
@@ -169,6 +188,35 @@ async function save(): Promise<void> {
         new Set([...configuredKeys.value, ...result.configured_keys]),
       );
       ElMessage.success("WhatsApp Cloud API 配置已保存，请执行连接测试");
+    } else if (isFeishu.value) {
+      const values = Object.entries(feishuForm)
+        .filter(([, value]) => value.trim())
+        .map(([key, value]) => ({
+          key,
+          value: value.trim(),
+          value_type: "string",
+          is_secret: key === "app_secret",
+        }));
+      const missing = ["app_id", "app_secret"].filter(
+        (key) => !isConfigured(key) && !values.some((item) => item.key === key),
+      );
+      if (missing.length) {
+        ElMessage.warning("请填写完整的飞书 App ID 和 App Secret");
+        return;
+      }
+      if (!values.length) {
+        ElMessage.info("没有需要保存的配置变更");
+        return;
+      }
+      const result = await configureConnector({
+        connector_id: selected.value.id,
+        values,
+      });
+      configuredKeys.value = Array.from(
+        new Set([...configuredKeys.value, ...result.configured_keys]),
+      );
+      Object.assign(feishuForm, { app_id: "", app_secret: "" });
+      ElMessage.success("飞书企业应用配置已加密保存，请发送测试通知");
     } else {
       if (genericConfigRows.some((item) => !item.key || !item.value)) {
         ElMessage.warning("请填写配置键和值");
@@ -210,16 +258,34 @@ async function testConnection(): Promise<void> {
   if (!selected.value) return;
   testing.value = true;
   try {
-    const result = await testWhatsAppConnector(selected.value.id);
-    ElMessage.success(
-      `${result.message}${result.latency_ms === null ? "" : `（${result.latency_ms} ms）`}`,
-    );
+    if (isFeishu.value) {
+      const result = await testFeishuConnector();
+      ElMessage.success(result.message);
+    } else {
+      const result = await testWhatsAppConnector(selected.value.id);
+      ElMessage.success(
+        `${result.message}${result.latency_ms === null ? "" : `（${result.latency_ms} ms）`}`,
+      );
+    }
     await load();
   } catch (errorValue) {
     ElMessage.error(getApiErrorMessage(errorValue));
     await load();
   } finally {
     testing.value = false;
+  }
+}
+
+async function testFeishuFromCard(connector: Connector): Promise<void> {
+  testingConnectorId.value = connector.id;
+  try {
+    const result = await testFeishuConnector();
+    ElMessage.success(result.message);
+  } catch (errorValue) {
+    ElMessage.error(getApiErrorMessage(errorValue));
+  } finally {
+    testingConnectorId.value = "";
+    await load();
   }
 }
 
@@ -281,13 +347,24 @@ onMounted(async () => {
             </span>
             <small>{{ formatDateTime(connector.last_health_check_at) }}</small>
           </div>
-          <el-button
-            v-permission="['connector.manage', 'connector.secret_manage']"
-            :icon="Key"
-            @click="openConfig(connector)"
-          >
-            配置连接
-          </el-button>
+          <div class="connector-actions">
+            <el-button
+              v-permission="['connector.manage', 'connector.secret_manage']"
+              :icon="Key"
+              @click="openConfig(connector)"
+            >
+              配置连接
+            </el-button>
+            <el-button
+              v-if="connector.provider === 'feishu'"
+              v-permission="['connector.manage', 'connector.secret_manage']"
+              :icon="Connection"
+              :loading="testingConnectorId === connector.id"
+              @click="testFeishuFromCard(connector)"
+            >
+              测试通知
+            </el-button>
+          </div>
         </el-card>
       </section>
     </ApiState>
@@ -303,6 +380,13 @@ onMounted(async () => {
         :title="isWhatsAppWeb
           ? 'WhatsApp Web 登录由 Gateway 的 LocalAuth 安全保存，本页面不会读取登录数据。'
           : 'WhatsApp Cloud API 凭据将加密保存，平台不会在页面中展示敏感信息。'"
+        type="info"
+        show-icon
+        :closable="false"
+      />
+      <el-alert
+        v-else-if="isFeishu"
+        title="一个企业仅配置一个飞书 App。App Secret 将加密保存，销售人员 Open ID 请在用户管理中绑定。"
         type="info"
         show-icon
         :closable="false"
@@ -383,6 +467,35 @@ onMounted(async () => {
         />
       </el-form>
 
+      <el-form
+        v-else-if="isFeishu"
+        v-loading="statusLoading"
+        :model="feishuForm"
+        label-position="top"
+        class="connector-config-form"
+      >
+        <el-form-item label="飞书 App ID" required>
+          <el-input
+            v-model="feishuForm.app_id"
+            :placeholder="configuredPlaceholder('app_id', 'cli_xxxxxxxxxxxxxxxx')"
+          />
+        </el-form-item>
+        <el-form-item label="飞书 App Secret" required>
+          <el-input
+            v-model="feishuForm.app_secret"
+            type="password"
+            show-password
+            :placeholder="configuredPlaceholder('app_secret', '企业自建应用 App Secret')"
+          />
+        </el-form-item>
+        <el-alert
+          title="测试通知会发送给当前登录管理员，请先在用户管理中绑定该管理员的飞书 Open ID。"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
+      </el-form>
+
       <div v-else>
         <div
           v-for="(item, index) in genericConfigRows"
@@ -417,12 +530,12 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button
-          v-if="isWhatsApp && !isWhatsAppWeb"
+          v-if="(isWhatsApp && !isWhatsAppWeb) || isFeishu"
           :icon="Connection"
           :loading="testing"
           @click="testConnection"
         >
-          测试连接
+          {{ isFeishu ? "测试通知" : "测试连接" }}
         </el-button>
         <el-button
           v-if="isWhatsAppWeb"

@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
+from app.connectors.feishu.service import FEISHU_CONFIG_KEYS, FEISHU_SECRET_KEYS
 from app.connectors.whatsapp.client import (
     SECRET_CONFIG_KEYS,
     SUPPORTED_CONFIG_KEYS,
@@ -70,6 +71,18 @@ class ConnectorService:
                     "WHATSAPP_CONFIG_INCOMPLETE",
                     "; ".join(errors),
                 )
+        if connector.provider == "feishu" and payload.values:
+            if unsupported := set(keys) - FEISHU_CONFIG_KEYS:
+                raise ConflictError(
+                    "FEISHU_CONFIG_KEY_UNSUPPORTED",
+                    f"Unsupported Feishu configuration key: {sorted(unsupported)[0]}",
+                )
+            missing = [key for key in FEISHU_CONFIG_KEYS if not effective_values.get(key)]
+            if missing:
+                raise ConflictError(
+                    "FEISHU_CONFIG_INCOMPLETE",
+                    f"Missing Feishu configuration: {', '.join(sorted(missing))}",
+                )
 
         existing = await self.repository.get_configs(connector.id, set(keys))
         for item in payload.values:
@@ -92,7 +105,11 @@ class ConnectorService:
             config.is_secret = (
                 True
                 if connector.provider == "whatsapp" and item.key in SECRET_CONFIG_KEYS
-                else item.is_secret
+                else (
+                    item.key in FEISHU_SECRET_KEYS
+                    if connector.provider == "feishu"
+                    else item.is_secret
+                )
             )
             config.updated_by = principal.user_id
 
@@ -129,6 +146,14 @@ class ConnectorService:
             else:
                 connector.session_id = None
             connector.external_account_id = str(external_account_id).strip()
+            connector.status = "draft"
+            connector.health_status = None
+            connector.health_detail = {
+                "message": "Configuration saved; connection test required."
+            }
+            connector.last_health_check_at = None
+        if connector.provider == "feishu" and payload.values:
+            connector.external_account_id = str(effective_values["app_id"]).strip()
             connector.status = "draft"
             connector.health_status = None
             connector.health_detail = {

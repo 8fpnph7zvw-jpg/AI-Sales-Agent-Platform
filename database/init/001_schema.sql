@@ -50,14 +50,21 @@ CREATE TABLE users (
     timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
     mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     last_login_at DATETIME(6) NULL,
+    feishu_open_id VARCHAR(128) NULL,
+    feishu_name VARCHAR(120) NULL,
+    feishu_bind_status VARCHAR(16) NOT NULL DEFAULT 'unbound',
+    feishu_bind_time DATETIME(6) NULL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     deleted_at DATETIME(6) NULL,
     CONSTRAINT pk_users PRIMARY KEY (id),
     CONSTRAINT uq_users_public_id UNIQUE (public_id),
     CONSTRAINT tenant_email UNIQUE (tenant_id, email),
+    CONSTRAINT uq_users_tenant_feishu_open_id UNIQUE (tenant_id, feishu_open_id),
     CONSTRAINT ck_users_status_allowed
         CHECK (status IN ('invited', 'active', 'locked', 'disabled')),
+    CONSTRAINT ck_users_feishu_bind_status_allowed
+        CHECK (feishu_bind_status IN ('unbound', 'bound')),
     CONSTRAINT fk_users_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT,
     INDEX ix_users_tenant_status (tenant_id, status)
@@ -85,11 +92,9 @@ CREATE TABLE sales_profiles (
     tenant_id BIGINT UNSIGNED NOT NULL,
     user_id BIGINT UNSIGNED NOT NULL,
     sales_name VARCHAR(120) NOT NULL,
-    feishu_open_id VARCHAR(128) NULL,
     created_time DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     CONSTRAINT pk_sales_profiles PRIMARY KEY (id),
     CONSTRAINT user_id UNIQUE (user_id),
-    CONSTRAINT tenant_feishu_open_id UNIQUE (tenant_id, feishu_open_id),
     CONSTRAINT fk_sales_profiles_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
     CONSTRAINT fk_sales_profiles_user_id_users

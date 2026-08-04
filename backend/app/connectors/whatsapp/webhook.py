@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
+from app.connectors.feishu.repository import FeishuConnectorRepository
+from app.connectors.feishu.service import FeishuConnectorService
 from app.connectors.whatsapp.repository import WhatsAppRepository
 from app.connectors.whatsapp.schemas import (
     WhatsAppConfigStatusResponse,
@@ -29,7 +31,6 @@ from app.db.session import get_db
 from app.integrations.dify.client import DifyClient
 from app.modules.lead_score.repository import LeadScoreRepository
 from app.services.dify_scoring_service import DifyScoringService
-from app.services.feishu_service import FeishuService
 from app.services.lead_scoring_orchestrator import LeadScoringOrchestrator
 
 webhook_router = APIRouter(prefix="/webhooks/whatsapp", tags=["WhatsApp Webhook"])
@@ -52,7 +53,12 @@ def get_whatsapp_service(
             session,
             LeadScoreRepository(session),
             DifyScoringService(settings),
-            FeishuService(settings),
+            FeishuConnectorService(
+                session,
+                FeishuConnectorRepository(session),
+                ConfigCipher(settings),
+                settings,
+            ),
         ),
     )
 

@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.auth.sales_profile import SalesProfile
+from app.models.auth.user import User
 from app.models.conversation.message import Message
 from app.models.customer.customer import Customer
 from app.models.customer.customer_score import CustomerScore
@@ -75,11 +75,12 @@ class LeadScoreRepository:
         rows.reverse()
         return rows
 
-    async def sales_profile(self, tenant_id: int, user_id: int) -> SalesProfile | None:
+    async def sales_user(self, tenant_id: int, user_id: int) -> User | None:
         return await self.session.scalar(
-            select(SalesProfile).where(
-                SalesProfile.tenant_id == tenant_id,
-                SalesProfile.user_id == user_id,
+            select(User).where(
+                User.tenant_id == tenant_id,
+                User.id == user_id,
+                User.deleted_at.is_(None),
             )
         )
 

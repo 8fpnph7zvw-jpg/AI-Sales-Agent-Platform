@@ -11,6 +11,7 @@ class SalesUserCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     sales_name: str = Field(min_length=1, max_length=120)
     feishu_open_id: str | None = Field(default=None, max_length=128)
+    feishu_name: str | None = Field(default=None, max_length=120)
 
     @field_validator("email")
     @classmethod
@@ -24,6 +25,12 @@ class SalesUserUpdate(BaseModel):
     status: str | None = Field(default=None, pattern="^(active|locked|disabled)$")
     sales_name: str | None = Field(default=None, min_length=1, max_length=120)
     feishu_open_id: str | None = Field(default=None, max_length=128)
+    feishu_name: str | None = Field(default=None, max_length=120)
+
+
+class FeishuBindingUpdate(BaseModel):
+    feishu_open_id: str | None = Field(default=None, max_length=128)
+    feishu_name: str | None = Field(default=None, max_length=120)
 
 
 class SalesUserRead(BaseModel):
@@ -35,6 +42,9 @@ class SalesUserRead(BaseModel):
     role: str
     sales_name: str | None
     feishu_open_id: str | None
+    feishu_name: str | None
+    feishu_bind_status: str
+    feishu_bind_time: datetime | None
     created_at: datetime
 
 

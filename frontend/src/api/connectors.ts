@@ -55,3 +55,31 @@ export async function testWhatsAppConnector(
   );
   return data;
 }
+
+export interface FeishuConfigStatus {
+  connector_id: string;
+  configured_keys: string[];
+  status: string;
+  health_status: string | null;
+  last_health_check_at: string | null;
+}
+
+export interface FeishuTestResult {
+  success: boolean;
+  message: string;
+  message_id: string | null;
+}
+
+export async function getFeishuConfigStatus(
+  connectorId: string,
+): Promise<FeishuConfigStatus> {
+  const { data } = await apiClient.get<FeishuConfigStatus>(
+    `/connectors/feishu/${connectorId}/config-status`,
+  );
+  return data;
+}
+
+export async function testFeishuConnector(): Promise<FeishuTestResult> {
+  const { data } = await apiClient.post<FeishuTestResult>("/connectors/feishu/test");
+  return data;
+}

@@ -4,8 +4,9 @@ import httpx
 import pytest
 
 from app.api.dependencies.auth import Principal, get_current_principal
-from app.connectors.feishu.router import get_feishu_service
+from app.connectors.feishu.router import get_feishu_connector_service
 from app.core.config import get_settings
+from app.integrations.feishu.schemas import FeishuSendResult
 from app.main import create_app
 from app.modules.ai_agent.router import get_ai_agent_service
 from app.modules.ai_agent.schemas import AgentChatResponse, AgentUsage
@@ -171,11 +172,12 @@ async def test_whatsapp_test_endpoint_requires_bearer_token() -> None:
 @pytest.mark.asyncio
 async def test_feishu_test_endpoint_calls_service() -> None:
     app = create_app()
-    calls: list[tuple[str, str]] = []
+    calls: list[int] = []
 
     class FakeFeishuService:
-        async def send_text_message(self, open_id: str, message: str) -> None:
-            calls.append((open_id, message))
+        async def test_notification(self, principal: Principal) -> FeishuSendResult:
+            calls.append(principal.user_id)
+            return FeishuSendResult(message_id="om_test")
 
     async def principal_override() -> Principal:
         return Principal(
@@ -187,19 +189,22 @@ async def test_feishu_test_endpoint_calls_service() -> None:
         )
 
     app.dependency_overrides[get_current_principal] = principal_override
-    app.dependency_overrides[get_feishu_service] = FakeFeishuService
+    app.dependency_overrides[get_feishu_connector_service] = FakeFeishuService
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
     ) as client:
         response = await client.post(
             "/api/v1/connectors/feishu/test",
-            json={"open_id": "ou_test_receiver", "message": "test message"},
         )
 
     assert response.status_code == 200
-    assert response.json() == {"success": True}
-    assert calls == [("ou_test_receiver", "test message")]
+    assert response.json() == {
+        "success": True,
+        "message": "AI Sales Agent 飞书通知测试成功",
+        "message_id": "om_test",
+    }
+    assert calls == [1]
 
 
 @pytest.mark.asyncio

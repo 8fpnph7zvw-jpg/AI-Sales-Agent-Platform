@@ -3,22 +3,52 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal, require_any_permission
-from app.integrations.feishu.schemas import FeishuTestRequest, FeishuTestResponse
-from app.integrations.feishu.service import FeishuService, get_feishu_service
+from app.connectors.feishu.repository import FeishuConnectorRepository
+from app.connectors.feishu.service import FeishuConnectorService
+from app.core.config import get_settings
+from app.core.encryption import ConfigCipher
+from app.db.session import get_db
+from app.integrations.feishu.schemas import FeishuConfigStatusResponse, FeishuTestResponse
 
 router = APIRouter(prefix="/connectors/feishu", tags=["Feishu Connector"])
 
 
+def get_feishu_connector_service(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> FeishuConnectorService:
+    settings = get_settings()
+    return FeishuConnectorService(
+        session,
+        FeishuConnectorRepository(session),
+        ConfigCipher(settings),
+        settings,
+    )
+
+
+@router.get("/{connector_id}/config-status", response_model=FeishuConfigStatusResponse)
+async def get_feishu_config_status(
+    connector_id: str,
+    service: Annotated[FeishuConnectorService, Depends(get_feishu_connector_service)],
+    principal: Annotated[
+        Principal,
+        Depends(require_any_permission("connector.read", "connector.manage")),
+    ],
+) -> FeishuConfigStatusResponse:
+    return FeishuConfigStatusResponse(
+        **await service.config_status(principal, connector_id)
+    )
+
+
 @router.post("/test", response_model=FeishuTestResponse)
 async def test_feishu_connector(
-    payload: FeishuTestRequest,
-    service: Annotated[FeishuService, Depends(get_feishu_service)],
-    _principal: Annotated[
+    service: Annotated[FeishuConnectorService, Depends(get_feishu_connector_service)],
+    principal: Annotated[
         Principal,
         Depends(require_any_permission("connector.manage", "connector.secret_manage")),
     ],
 ) -> FeishuTestResponse:
-    await service.send_text_message(payload.open_id, payload.message)
-    return FeishuTestResponse(success=True)
+    result = await service.test_notification(principal)
+    return FeishuTestResponse(success=True, message_id=result.message_id)
