@@ -20,10 +20,12 @@ export async function deleteSalesUser(id: string): Promise<void> {
   await apiClient.delete(`/users/${id}`);
 }
 
-export async function updateFeishuBinding(
-  id: string,
-  payload: { feishu_open_id: string | null; feishu_name: string | null },
-): Promise<SalesUser> {
-  const { data } = await apiClient.patch<SalesUser>(`/users/${id}/feishu-binding`, payload);
+export async function getFeishuStatus(id: string): Promise<{
+  user_id: string;
+  bound: boolean;
+  feishu_name: string | null;
+  bind_time: string | null;
+}> {
+  const { data } = await apiClient.get(`/users/${id}/feishu/status`);
   return data;
 }

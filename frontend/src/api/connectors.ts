@@ -83,3 +83,13 @@ export async function testFeishuConnector(): Promise<FeishuTestResult> {
   const { data } = await apiClient.post<FeishuTestResult>("/connectors/feishu/test");
   return data;
 }
+
+export async function getFeishuOAuthUrl(
+  userId: string,
+): Promise<{ url: string; expires_in: number }> {
+  const { data } = await apiClient.get<{ url: string; expires_in: number }>(
+    "/connectors/feishu/oauth/url",
+    { params: { user_id: userId } },
+  );
+  return data;
+}

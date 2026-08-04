@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 
@@ -23,9 +24,15 @@ FEISHU_APP_ID_KEY = "app_id"
 FEISHU_APP_SECRET_KEY = "app_secret"
 FEISHU_CONFIG_KEYS = frozenset({FEISHU_APP_ID_KEY, FEISHU_APP_SECRET_KEY})
 FEISHU_SECRET_KEYS = frozenset({FEISHU_APP_SECRET_KEY})
-TEST_MESSAGE = "AI Sales Agent 飞书通知测试成功"
+TEST_MESSAGE = "AI Sales Agent 测试通知\n\nFeishu connector connection successful."
 SERVICE_CACHE_SIZE = 256
 _service_cache: OrderedDict[tuple[int, int, str], FeishuService] = OrderedDict()
+
+
+@dataclass(frozen=True, slots=True)
+class FeishuAppCredentials:
+    app_id: str
+    app_secret: str
 
 
 class FeishuConnectorService:
@@ -66,7 +73,7 @@ class FeishuConnectorService:
                 principal.tenant_id,
                 principal.user_id,
             )
-            raise ConflictError("FEISHU_NOT_BOUND", "请先绑定飞书账号")
+            raise ConflictError("FEISHU_NOT_BOUND", "请先绑定当前账号飞书。")
 
         connector = await self.repository.get_connector(
             principal.tenant_id,
@@ -120,7 +127,39 @@ class FeishuConnectorService:
             user_id=user_id,
         )
 
+    async def get_credentials(self, tenant_id: int) -> FeishuAppCredentials:
+        connector = await self.repository.get_connector(tenant_id)
+        if connector is None:
+            raise ServiceConfigurationError("Feishu Connector is not configured.")
+        return await self._credentials(connector)
+
     async def _service(self, connector) -> FeishuService:
+        credentials = await self._credentials(connector)
+        credential_fingerprint = sha256(
+            (
+                f"{credentials.app_id}\0{credentials.app_secret}\0"
+                f"{self.settings.feishu_api_base_url}\0{self.settings.feishu_timeout_seconds}"
+            ).encode()
+        ).hexdigest()
+        cache_key = (connector.tenant_id, connector.id, credential_fingerprint)
+        if cached := _service_cache.get(cache_key):
+            _service_cache.move_to_end(cache_key)
+            return cached
+        service = FeishuService(
+            FeishuClient(
+                self.settings,
+                app_id=credentials.app_id,
+                app_secret=credentials.app_secret,
+                enabled=True,
+            )
+        )
+        _service_cache[cache_key] = service
+        _service_cache.move_to_end(cache_key)
+        while len(_service_cache) > SERVICE_CACHE_SIZE:
+            _service_cache.popitem(last=False)
+        return service
+
+    async def _credentials(self, connector) -> FeishuAppCredentials:
         configs = await self.repository.get_configs(connector.id)
         missing = FEISHU_CONFIG_KEYS - configs.keys()
         if missing:
@@ -139,26 +178,7 @@ class FeishuConnectorService:
             values[key] = str(value).strip()
         if not all(values.values()):
             raise ServiceConfigurationError("Feishu App ID and App Secret are required.")
-        credential_fingerprint = sha256(
-            (
-                f"{values[FEISHU_APP_ID_KEY]}\0{values[FEISHU_APP_SECRET_KEY]}\0"
-                f"{self.settings.feishu_api_base_url}\0{self.settings.feishu_timeout_seconds}"
-            ).encode()
-        ).hexdigest()
-        cache_key = (connector.tenant_id, connector.id, credential_fingerprint)
-        if cached := _service_cache.get(cache_key):
-            _service_cache.move_to_end(cache_key)
-            return cached
-        service = FeishuService(
-            FeishuClient(
-                self.settings,
-                app_id=values[FEISHU_APP_ID_KEY],
-                app_secret=values[FEISHU_APP_SECRET_KEY],
-                enabled=True,
-            )
+        return FeishuAppCredentials(
+            app_id=values[FEISHU_APP_ID_KEY],
+            app_secret=values[FEISHU_APP_SECRET_KEY],
         )
-        _service_cache[cache_key] = service
-        _service_cache.move_to_end(cache_key)
-        while len(_service_cache) > SERVICE_CACHE_SIZE:
-            _service_cache.popitem(last=False)
-        return service

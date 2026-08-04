@@ -386,7 +386,7 @@ onMounted(async () => {
       />
       <el-alert
         v-else-if="isFeishu"
-        title="一个企业仅配置一个飞书 App。App Secret 将加密保存，销售人员 Open ID 请在用户管理中绑定。"
+        title="一个企业仅配置一个飞书 App。App Secret 将加密保存，用户通过飞书 OAuth 完成账号绑定。"
         type="info"
         show-icon
         :closable="false"
@@ -489,7 +489,7 @@ onMounted(async () => {
           />
         </el-form-item>
         <el-alert
-          title="测试通知会发送给当前登录管理员，请先在用户管理中绑定该管理员的飞书 Open ID。"
+          title="测试通知会发送给当前登录管理员；若未绑定，请先在用户管理中完成飞书 OAuth 授权。"
           type="warning"
           show-icon
           :closable="false"

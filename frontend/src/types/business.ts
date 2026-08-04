@@ -45,6 +45,7 @@ export interface SalesUser {
   status: string;
   role: "admin" | "sales";
   sales_name: string | null;
+  phone: string | null;
   feishu_open_id: string | null;
   feishu_name: string | null;
   feishu_bind_status: "unbound" | "bound";
@@ -57,8 +58,7 @@ export interface SalesUserCreate {
   password: string;
   display_name: string;
   sales_name: string;
-  feishu_open_id?: string;
-  feishu_name?: string;
+  phone?: string;
 }
 
 export interface SalesUserUpdate {
@@ -66,8 +66,7 @@ export interface SalesUserUpdate {
   password?: string;
   status?: "active" | "locked" | "disabled";
   sales_name?: string;
-  feishu_open_id?: string;
-  feishu_name?: string;
+  phone?: string;
 }
 
 export interface CustomerUpdate {

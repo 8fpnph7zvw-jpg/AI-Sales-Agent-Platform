@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.auth import Principal
-from app.core.exceptions import ConflictError, ResourceNotFoundError
+from app.core.exceptions import ConflictError, PermissionDeniedError, ResourceNotFoundError
 from app.core.security import SecurityManager
 from app.models.auth.sales_profile import SalesProfile
 from app.models.auth.user import User
@@ -20,6 +20,7 @@ from app.modules.user_management.schemas import (
     SalesUserListResponse,
     SalesUserRead,
     SalesUserUpdate,
+    UserFeishuStatusResponse,
 )
 
 
@@ -52,8 +53,8 @@ class UserManagementService:
             password_hash=self.security.hash_password(payload.password),
             display_name=payload.display_name,
             status="active",
+            phone=(payload.phone or "").strip() or None,
         )
-        self._set_feishu_binding(user, payload.feishu_open_id, payload.feishu_name)
         self.session.add(user)
         await self.session.flush()
         self.session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by=principal.user_id))
@@ -86,6 +87,8 @@ class UserManagementService:
             user.password_hash = self.security.hash_password(values["password"])
         if "status" in values:
             user.status = values["status"]
+        if "phone" in values:
+            user.phone = (values["phone"] or "").strip() or None
         profile = await self.repository.profile(user.id)
         if profile is None:
             profile = SalesProfile(
@@ -96,30 +99,27 @@ class UserManagementService:
             self.session.add(profile)
         if "sales_name" in values:
             profile.sales_name = values["sales_name"]
-        if "feishu_open_id" in values or "feishu_name" in values:
-            self._set_feishu_binding(
-                user,
-                values.get("feishu_open_id", user.feishu_open_id),
-                values.get("feishu_name", user.feishu_name),
-            )
         await self._commit_conflicts()
         return self._read(user, profile, role)
 
-    async def update_feishu_binding(
+    async def feishu_status(
         self,
         principal: Principal,
         user_id: str,
-        feishu_open_id: str | None,
-        feishu_name: str | None,
-    ) -> SalesUserRead:
-        user = await self.repository.get(principal.tenant_id, user_id, for_update=True)
+    ) -> UserFeishuStatusResponse:
+        if user_id != principal.user_public_id and not principal.permissions.intersection(
+            {"user.read", "user.manage"}
+        ):
+            raise PermissionDeniedError()
+        user = await self.repository.get(principal.tenant_id, user_id)
         if user is None:
             raise ResourceNotFoundError("User")
-        profile = await self.repository.profile(user.id)
-        role = await self.repository.role_code(user.id)
-        self._set_feishu_binding(user, feishu_open_id, feishu_name)
-        await self._commit_conflicts()
-        return self._read(user, profile, role)
+        return UserFeishuStatusResponse(
+            user_id=user.public_id,
+            bound=user.feishu_bind_status == "bound" and bool(user.feishu_open_id),
+            feishu_name=user.feishu_name,
+            bind_time=user.feishu_bind_time,
+        )
 
     async def delete(self, principal: Principal, user_id: str) -> None:
         user = await self.repository.get(principal.tenant_id, user_id, for_update=True)
@@ -156,19 +156,6 @@ class UserManagementService:
             ) from exc
 
     @staticmethod
-    def _set_feishu_binding(
-        user: User,
-        feishu_open_id: str | None,
-        feishu_name: str | None,
-    ) -> None:
-        open_id = (feishu_open_id or "").strip() or None
-        name = (feishu_name or "").strip() or None
-        user.feishu_open_id = open_id
-        user.feishu_name = name if open_id else None
-        user.feishu_bind_status = "bound" if open_id else "unbound"
-        user.feishu_bind_time = datetime.now(UTC) if open_id else None
-
-    @staticmethod
     def _read(user: User, profile: SalesProfile | None, role: str | None) -> SalesUserRead:
         return SalesUserRead(
             id=user.public_id,
@@ -178,6 +165,7 @@ class UserManagementService:
             status=user.status,
             role="admin" if role == "owner" else (role or "sales"),
             sales_name=profile.sales_name if profile else None,
+            phone=user.phone,
             feishu_open_id=user.feishu_open_id,
             feishu_name=user.feishu_name,
             feishu_bind_status=user.feishu_bind_status,

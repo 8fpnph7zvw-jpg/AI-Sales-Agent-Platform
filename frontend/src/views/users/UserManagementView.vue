@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { useRoute, useRouter } from "vue-router";
 import {
   createSalesUser,
   deleteSalesUser,
   getUsers,
-  updateFeishuBinding,
   updateSalesUser,
 } from "@/api/users";
+import { getFeishuOAuthUrl } from "@/api/connectors";
 import { getApiErrorMessage } from "@/api/client";
 import ApiState from "@/components/common/ApiState.vue";
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -18,18 +19,18 @@ const loading = ref(false);
 const saving = ref(false);
 const error = ref("");
 const visible = ref(false);
-const bindingVisible = ref(false);
-const bindingSaving = ref(false);
 const editingId = ref("");
-const bindingUser = ref<SalesUser | null>(null);
+const oauthLoadingId = ref("");
 const rows = ref<SalesUser[]>([]);
+const route = useRoute();
+const router = useRouter();
 const form = reactive<SalesUserCreate>({
   email: "",
   password: "",
   display_name: "",
   sales_name: "",
+  phone: "",
 });
-const bindingForm = reactive({ feishu_open_id: "", feishu_name: "" });
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -43,7 +44,13 @@ async function load(): Promise<void> {
 }
 
 function resetForm(): void {
-  Object.assign(form, { email: "", password: "", display_name: "", sales_name: "" });
+  Object.assign(form, {
+    email: "",
+    password: "",
+    display_name: "",
+    sales_name: "",
+    phone: "",
+  });
 }
 
 function openCreate(): void {
@@ -59,6 +66,7 @@ function openEdit(row: SalesUser): void {
     password: "",
     display_name: row.display_name,
     sales_name: row.sales_name || row.display_name,
+    phone: row.phone || "",
   });
   visible.value = true;
 }
@@ -70,6 +78,7 @@ async function save(): Promise<void> {
       await updateSalesUser(editingId.value, {
         display_name: form.display_name,
         sales_name: form.sales_name,
+        phone: form.phone,
         password: form.password || undefined,
       });
       ElMessage.success("销售账号已更新");
@@ -87,46 +96,14 @@ async function save(): Promise<void> {
   }
 }
 
-function openBinding(row: SalesUser): void {
-  bindingUser.value = row;
-  Object.assign(bindingForm, {
-    feishu_open_id: row.feishu_open_id || "",
-    feishu_name: row.feishu_name || row.display_name,
-  });
-  bindingVisible.value = true;
-}
-
-async function saveBinding(): Promise<void> {
-  if (!bindingUser.value || !bindingForm.feishu_open_id.trim()) {
-    ElMessage.warning("请填写飞书 Open ID");
-    return;
-  }
-  bindingSaving.value = true;
+async function bindFeishu(row: SalesUser): Promise<void> {
+  oauthLoadingId.value = row.id;
   try {
-    await updateFeishuBinding(bindingUser.value.id, {
-      feishu_open_id: bindingForm.feishu_open_id.trim(),
-      feishu_name: bindingForm.feishu_name.trim() || null,
-    });
-    ElMessage.success("飞书账号已绑定");
-    bindingVisible.value = false;
-    await load();
+    const result = await getFeishuOAuthUrl(row.id);
+    window.location.assign(result.url);
   } catch (requestError) {
     ElMessage.error(getApiErrorMessage(requestError));
-  } finally {
-    bindingSaving.value = false;
-  }
-}
-
-async function unbind(row: SalesUser): Promise<void> {
-  try {
-    await ElMessageBox.confirm(`确认解除“${row.display_name}”的飞书绑定？`, "解除绑定", {
-      type: "warning",
-    });
-    await updateFeishuBinding(row.id, { feishu_open_id: null, feishu_name: null });
-    ElMessage.success("飞书账号已解除绑定");
-    await load();
-  } catch (requestError) {
-    if (requestError !== "cancel") ElMessage.error(getApiErrorMessage(requestError));
+    oauthLoadingId.value = "";
   }
 }
 
@@ -137,12 +114,24 @@ async function remove(row: SalesUser): Promise<void> {
   await load();
 }
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  const oauthResult = route.query.feishu_oauth;
+  if (oauthResult === "success") ElMessage.success("飞书账号绑定成功");
+  if (oauthResult === "denied") ElMessage.warning("已取消飞书授权");
+  if (oauthResult === "error") ElMessage.error("飞书账号绑定失败，请重新授权");
+  if (oauthResult) {
+    const query = { ...route.query };
+    delete query.feishu_oauth;
+    delete query.error;
+    await router.replace({ query });
+  }
+});
 </script>
 
 <template>
   <div>
-    <PageHeader title="用户管理" description="管理账号，并为每位销售绑定企业飞书 Open ID">
+    <PageHeader title="用户管理" description="通过企业飞书 OAuth 为管理员和销售账号完成绑定">
       <el-button type="primary" @click="openCreate">创建销售账号</el-button>
     </PageHeader>
     <el-card shadow="never" class="content-card">
@@ -150,13 +139,13 @@ onMounted(load);
         <el-table :data="rows" stripe>
           <el-table-column prop="display_name" label="姓名" />
           <el-table-column prop="email" label="邮箱" min-width="220" />
+          <el-table-column prop="phone" label="手机号" min-width="150" />
           <el-table-column prop="role" label="角色" width="100" />
           <el-table-column label="飞书绑定" min-width="260">
             <template #default="{ row }: { row: SalesUser }">
               <div v-if="row.feishu_bind_status === 'bound'">
                 <el-tag type="success" size="small">已绑定</el-tag>
                 <span class="feishu-name">{{ row.feishu_name || "未填写名称" }}</span>
-                <div class="feishu-open-id">{{ row.feishu_open_id }}</div>
               </div>
               <el-tag v-else type="info" size="small">未绑定</el-tag>
             </template>
@@ -164,17 +153,15 @@ onMounted(load);
           <el-table-column label="创建时间" width="180">
             <template #default="{ row }: { row: SalesUser }">{{ formatDateTime(row.created_at) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="250">
+          <el-table-column label="操作" width="220">
             <template #default="{ row }: { row: SalesUser }">
-              <el-button text type="primary" @click="openBinding(row)">
-                {{ row.feishu_bind_status === "bound" ? "修改飞书" : "绑定飞书" }}
-              </el-button>
               <el-button
-                v-if="row.feishu_bind_status === 'bound'"
                 text
-                @click="unbind(row)"
+                type="primary"
+                :loading="oauthLoadingId === row.id"
+                @click="bindFeishu(row)"
               >
-                解除绑定
+                {{ row.feishu_bind_status === "bound" ? "重新绑定" : "绑定飞书" }}
               </el-button>
               <template v-if="row.role === 'sales'">
                 <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
@@ -193,36 +180,11 @@ onMounted(load);
         </el-form-item>
         <el-form-item label="后台显示名称"><el-input v-model="form.display_name" /></el-form-item>
         <el-form-item label="销售姓名"><el-input v-model="form.sales_name" /></el-form-item>
+        <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="visible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
-      </template>
-    </el-dialog>
-    <el-dialog
-      v-model="bindingVisible"
-      :title="`绑定飞书 · ${bindingUser?.display_name || ''}`"
-      width="500px"
-    >
-      <el-alert
-        title="第一阶段采用管理员手动绑定；Open ID 来自企业同一个飞书 App，不需要为销售创建独立 App。"
-        type="info"
-        show-icon
-        :closable="false"
-      />
-      <el-form :model="bindingForm" label-position="top" class="binding-form">
-        <el-form-item label="飞书名称">
-          <el-input v-model="bindingForm.feishu_name" placeholder="例如：张三" />
-        </el-form-item>
-        <el-form-item label="飞书 Open ID" required>
-          <el-input v-model="bindingForm.feishu_open_id" placeholder="ou_xxxxxxxxxxxxxxxx" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="bindingVisible = false">取消</el-button>
-        <el-button type="primary" :loading="bindingSaving" @click="saveBinding">
-          保存绑定
-        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -233,14 +195,4 @@ onMounted(load);
   margin-left: 8px;
 }
 
-.feishu-open-id {
-  margin-top: 4px;
-  color: var(--el-text-color-secondary);
-  font-family: monospace;
-  font-size: 12px;
-}
-
-.binding-form {
-  margin-top: 18px;
-}
 </style>

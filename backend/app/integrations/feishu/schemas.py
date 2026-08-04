@@ -28,7 +28,7 @@ class FeishuSendResult(BaseModel):
 
 class FeishuTestResponse(BaseModel):
     success: bool
-    message: str = "AI Sales Agent 飞书通知测试成功"
+    message: str = "AI Sales Agent 测试通知发送成功"
     message_id: str | None = None
 
 
@@ -38,3 +38,30 @@ class FeishuConfigStatusResponse(BaseModel):
     status: str
     health_status: str | None
     last_health_check_at: datetime | None
+
+
+class FeishuOAuthURLResponse(BaseModel):
+    url: str
+    expires_in: int
+
+
+class FeishuOAuthTokenResponse(BaseModel):
+    code: int = 0
+    access_token: str | None = None
+    expires_in: int | None = None
+    error: str | None = None
+    error_description: str | None = None
+
+
+class FeishuOAuthUserInfo(BaseModel):
+    open_id: str
+    name: str | None = None
+    mobile: str | None = None
+    email: str | None = None
+    tenant_key: str | None = None
+
+
+class FeishuOAuthUserInfoResponse(BaseModel):
+    code: int
+    msg: str = ""
+    data: FeishuOAuthUserInfo | None = None

@@ -12,6 +12,7 @@ from app.models.auth.user import User
 from app.models.auth.user_role import UserRole
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
+from app.models.connector.feishu_oauth_state import FeishuOAuthState
 from app.models.connector.webhook_log import WebhookLog
 from app.models.connector.whatsapp_session import WhatsAppSession
 from app.models.conversation.conversation import Conversation
@@ -45,6 +46,7 @@ __all__ = [
     "CustomerScore",
     "CustomerSession",
     "Embedding",
+    "FeishuOAuthState",
     "KnowledgeChunk",
     "KnowledgeCollection",
     "KnowledgeDocument",

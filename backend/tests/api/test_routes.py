@@ -37,6 +37,7 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/users", "post"),
     ("/api/v1/users/{user_id}", "patch"),
     ("/api/v1/users/{user_id}", "delete"),
+    ("/api/v1/users/{user_id}/feishu/status", "get"),
     ("/api/v1/quotation", "post"),
     ("/api/v1/quotations", "get"),
     ("/api/v1/quotations/{quotation_id}/status", "patch"),
@@ -44,6 +45,9 @@ EXPECTED_OPERATIONS = {
     ("/api/v1/products", "get"),
     ("/api/v1/connectors", "get"),
     ("/api/v1/connectors/feishu/test", "post"),
+    ("/api/v1/connectors/feishu/oauth/url", "get"),
+    ("/api/v1/connectors/feishu/oauth/callback", "get"),
+    ("/api/v1/connectors/feishu/{connector_id}/config-status", "get"),
     ("/api/v1/connectors/config", "post"),
     ("/api/v1/connectors/whatsapp/{connector_id}/config-status", "get"),
     ("/api/v1/connectors/whatsapp/{connector_id}/web-session/connect", "post"),
@@ -201,7 +205,7 @@ async def test_feishu_test_endpoint_calls_service() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "success": True,
-        "message": "AI Sales Agent 飞书通知测试成功",
+        "message": "AI Sales Agent 测试通知发送成功",
         "message_id": "om_test",
     }
     assert calls == [1]

@@ -3,17 +3,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.auth import Principal, require_any_permission
+from app.api.dependencies.auth import Principal, get_current_principal, require_any_permission
 from app.core.config import get_settings
 from app.core.security import SecurityManager
 from app.db.session import get_db
 from app.modules.user_management.repository import UserManagementRepository
 from app.modules.user_management.schemas import (
-    FeishuBindingUpdate,
     SalesUserCreate,
     SalesUserListResponse,
     SalesUserRead,
     SalesUserUpdate,
+    UserFeishuStatusResponse,
 )
 from app.modules.user_management.service import UserManagementService
 
@@ -60,19 +60,13 @@ async def update_sales_user(
     return await service.update(principal, user_id, payload)
 
 
-@router.patch("/{user_id}/feishu-binding", response_model=SalesUserRead)
-async def update_feishu_binding(
+@router.get("/{user_id}/feishu/status", response_model=UserFeishuStatusResponse)
+async def get_user_feishu_status(
     user_id: str,
-    payload: FeishuBindingUpdate,
     service: Annotated[UserManagementService, Depends(get_service)],
-    principal: Annotated[Principal, Depends(require_any_permission("user.manage"))],
-) -> SalesUserRead:
-    return await service.update_feishu_binding(
-        principal,
-        user_id,
-        payload.feishu_open_id,
-        payload.feishu_name,
-    )
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> UserFeishuStatusResponse:
+    return await service.feishu_status(principal, user_id)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

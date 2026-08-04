@@ -50,6 +50,7 @@ CREATE TABLE users (
     timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
     mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     last_login_at DATETIME(6) NULL,
+    phone VARCHAR(32) NULL,
     feishu_open_id VARCHAR(128) NULL,
     feishu_name VARCHAR(120) NULL,
     feishu_bind_status VARCHAR(16) NOT NULL DEFAULT 'unbound',
@@ -68,6 +69,30 @@ CREATE TABLE users (
     CONSTRAINT fk_users_tenant_id_tenants
         FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE RESTRICT,
     INDEX ix_users_tenant_status (tenant_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE feishu_oauth_states (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tenant_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    initiated_by BIGINT UNSIGNED NULL,
+    state_hash VARCHAR(64) NOT NULL,
+    code_verifier VARCHAR(128) NOT NULL,
+    redirect_uri VARCHAR(512) NOT NULL,
+    expires_at DATETIME(6) NOT NULL,
+    consumed_at DATETIME(6) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT pk_feishu_oauth_states PRIMARY KEY (id),
+    CONSTRAINT uq_feishu_oauth_states_state_hash UNIQUE (state_hash),
+    CONSTRAINT fk_feishu_oauth_states_tenant_id_tenants
+        FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
+    CONSTRAINT fk_feishu_oauth_states_user_id_users
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    CONSTRAINT fk_feishu_oauth_states_initiated_by_users
+        FOREIGN KEY (initiated_by) REFERENCES users (id) ON DELETE SET NULL,
+    INDEX ix_feishu_oauth_states_expires (expires_at),
+    INDEX ix_feishu_oauth_states_user (tenant_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE roles (

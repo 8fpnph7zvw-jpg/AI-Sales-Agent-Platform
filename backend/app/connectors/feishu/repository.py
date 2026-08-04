@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth.user import User
 from app.models.connector.connector import Connector
 from app.models.connector.connector_config import ConnectorConfig
+from app.models.connector.feishu_oauth_state import FeishuOAuthState
 
 
 class FeishuConnectorRepository:
@@ -49,4 +52,28 @@ class FeishuConnectorRepository:
                 User.id == user_id,
                 User.deleted_at.is_(None),
             )
+        )
+
+    async def get_user_by_public_id(self, tenant_id: int, public_id: str) -> User | None:
+        return await self.session.scalar(
+            select(User).where(
+                User.tenant_id == tenant_id,
+                User.public_id == public_id,
+                User.deleted_at.is_(None),
+            )
+        )
+
+    def add_oauth_state(self, oauth_state: FeishuOAuthState) -> None:
+        self.session.add(oauth_state)
+
+    async def delete_expired_oauth_states(self, now: datetime) -> None:
+        await self.session.execute(
+            delete(FeishuOAuthState).where(FeishuOAuthState.expires_at < now)
+        )
+
+    async def get_oauth_state_for_update(self, state_hash: str) -> FeishuOAuthState | None:
+        return await self.session.scalar(
+            select(FeishuOAuthState)
+            .where(FeishuOAuthState.state_hash == state_hash)
+            .with_for_update()
         )

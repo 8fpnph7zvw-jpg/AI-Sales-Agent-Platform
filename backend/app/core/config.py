@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     feishu_timeout_seconds: float = 15.0
+    feishu_oauth_redirect_uri: str = (
+        "http://localhost:5173/api/v1/connectors/feishu/oauth/callback"
+    )
+    feishu_oauth_state_expire_minutes: int = 10
+    frontend_base_url: str = "http://localhost:5173"
     whatsapp_graph_api_base_url: str = "https://graph.facebook.com"
     whatsapp_graph_api_version: str = "v23.0"
     whatsapp_timeout_seconds: float = 15.0

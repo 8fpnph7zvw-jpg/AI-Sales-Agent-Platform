@@ -63,6 +63,7 @@ class User(
         Boolean, nullable=False, default=False, server_default="0"
     )
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    phone: Mapped[str | None] = mapped_column(String(32))
     feishu_open_id: Mapped[str | None] = mapped_column(String(128))
     feishu_name: Mapped[str | None] = mapped_column(String(120))
     feishu_bind_status: Mapped[str] = mapped_column(

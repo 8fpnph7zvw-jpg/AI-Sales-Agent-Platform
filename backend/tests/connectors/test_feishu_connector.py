@@ -76,6 +76,9 @@ def principal() -> Principal:
 
 @pytest.mark.asyncio
 async def test_bound_admin_receives_connector_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert TEST_MESSAGE == (
+        "AI Sales Agent 测试通知\n\nFeishu connector connection successful."
+    )
     session = FakeSession()
     repository = FakeRepository(
         SimpleNamespace(
@@ -124,5 +127,5 @@ async def test_unbound_admin_gets_binding_prompt() -> None:
         await service.test_notification(principal())
 
     assert error.value.code == "FEISHU_NOT_BOUND"
-    assert error.value.message == "请先绑定飞书账号"
+    assert error.value.message == "请先绑定当前账号飞书。"
     assert session.commit_count == 0
