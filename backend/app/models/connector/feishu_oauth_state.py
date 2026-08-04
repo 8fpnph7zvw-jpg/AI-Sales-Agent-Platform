@@ -5,11 +5,11 @@ from datetime import datetime
 from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import BIGINT_UNSIGNED, Base, BigIntPrimaryKeyMixin, TimestampMixin
+from app.db.base import BIGINT_UNSIGNED, Base, BigIntPrimaryKeyMixin, utc_now
 from app.db.types import UTCDateTime
 
 
-class FeishuOAuthState(BigIntPrimaryKeyMixin, TimestampMixin, Base):
+class FeishuOAuthState(BigIntPrimaryKeyMixin, Base):
     __tablename__ = "feishu_oauth_states"
     __table_args__ = (
         Index("ix_feishu_oauth_states_expires", "expires_at"),
@@ -35,3 +35,9 @@ class FeishuOAuthState(BigIntPrimaryKeyMixin, TimestampMixin, Base):
     redirect_uri: Mapped[str] = mapped_column(String(512), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), nullable=False, default=utc_now, onupdate=utc_now
+    )

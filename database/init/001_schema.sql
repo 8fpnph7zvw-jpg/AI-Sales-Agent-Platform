@@ -81,8 +81,8 @@ CREATE TABLE feishu_oauth_states (
     redirect_uri VARCHAR(512) NOT NULL,
     expires_at DATETIME(6) NOT NULL,
     consumed_at DATETIME(6) NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
     CONSTRAINT pk_feishu_oauth_states PRIMARY KEY (id),
     CONSTRAINT uq_feishu_oauth_states_state_hash UNIQUE (state_hash),
     CONSTRAINT fk_feishu_oauth_states_tenant_id_tenants
