@@ -98,6 +98,8 @@ async def test_text_message_uses_open_id_and_cached_token(
     assert message_call["params"] == {"receive_id_type": "open_id"}
     assert message_call["headers"] == {"Authorization": "Bearer token-1"}
     assert message_call["json"]["receive_id"] == "ou_receiver"
+    assert message_call["json"]["msg_type"] == "text"
+    assert isinstance(message_call["json"]["content"], str)
     assert json.loads(message_call["json"]["content"]) == {"text": "测试消息"}
 
 
@@ -155,6 +157,30 @@ async def test_http_error_raises_feishu_exception(
         await client.get_tenant_access_token()
 
     assert error.value.upstream_status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_message_http_error_logs_feishu_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    install_fake_client(
+        monkeypatch,
+        [
+            response(200, {"code": 0, "tenant_access_token": "token-1", "expire": 7200}),
+            response(400, {"code": 230001, "msg": "permission denied"}),
+        ],
+    )
+    client = FeishuClient(settings())
+    caplog.set_level(logging.ERROR, logger="app.integrations.feishu.client")
+
+    with pytest.raises(FeishuAPIError) as error:
+        await client.send_text_message("ou_receiver", "hello")
+
+    assert error.value.upstream_status_code == 400
+    assert "feishu_api_http_error path=open-apis/im/v1/messages" in caplog.text
+    assert "status_code=400" in caplog.text
+    assert 'response_body={"code":230001,"msg":"permission denied"}' in caplog.text
 
 
 class StubFeishuClient:

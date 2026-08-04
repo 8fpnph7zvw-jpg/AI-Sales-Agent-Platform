@@ -151,6 +151,12 @@ class FeishuClient:
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPStatusError as exc:
+            logger.error(
+                "feishu_api_http_error path=%s status_code=%s response_body=%s",
+                path,
+                exc.response.status_code,
+                exc.response.text,
+            )
             raise FeishuAPIError(
                 "API returned an HTTP error",
                 upstream_status_code=exc.response.status_code,
