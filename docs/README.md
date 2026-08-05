@@ -79,20 +79,20 @@ Nginx
 ---
 
 ## 项目截图
-![登陆页](docs/images/login.png)
-![系统首页](docs/images/dashboard.png)
-![自动回复AI客服PC端6332](docs/images/customer-chatPC端6332.png)
-![自动回复AI客服PC端3528](docs/images/customer-chatPC端3528.png)
-![自动回复AI客服PC端2378](docs/images/customer-chatPC端2378.png)
-![自动回复AI客服手机端6332](docs/images/customer-chat手机端自动回复6332.png)
-![自动回复AI客服手机端3528](docs/images/customer-chat手机端自动回复3528.png)
-![自动回复AI客服手机端2378](docs/images/customer-chat手机端自动回复2378.png)
-![第三方](docs/images/connector.png)
-![飞书通知销售](docs/images/feishu-notify1.png)
-![飞书通知销售](docs/images/feishu-notify2.png)
-![飞书通知销售](docs/images/feishu-notify3.png)
-![自动评分系统](docs/images/lead-score.png)
-![销售人员管理](docs/images/sales staff manage.png)
+![登陆页](images/login.png)
+![系统首页](images/dashboard.png)
+![自动回复AI客服PC端6332](images/customer-chatPC端6332.png)
+![自动回复AI客服PC端3528](images/customer-chatPC端3528.png)
+![自动回复AI客服PC端2378](images/customer-chatPC端2378.png)
+![自动回复AI客服手机端6332](images/customer-chat手机端自动回复6332.png)
+![自动回复AI客服手机端3528](images/customer-chat手机端自动回复3528.png)
+![自动回复AI客服手机端2378](images/customer-chat手机端自动回复2378.png)
+![第三方](images/connector.png)
+![飞书通知销售](images/feishu-notify1.png)
+![飞书通知销售](images/feishu-notify2.png)
+![飞书通知销售](images/feishu-notify3.png)
+![自动评分系统](images/lead-score.png)
+![销售人员管理](images/sales staff manage.png)
 ---
 
 ## Deployment
