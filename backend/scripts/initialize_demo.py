@@ -186,7 +186,7 @@ WORKFLOW_NODES: tuple[dict[str, Any], ...] = (
         "node_key": "notify_sales",
         "node_type": "condition_notification",
         "name": "高意向通知销售",
-        "config": {"condition": "intent_score >= 80", "channel": "feishu"},
+        "config": {"condition": "intent_score >= 70", "channel": "feishu"},
         "position": {"x": 800, "y": 160},
     },
 )

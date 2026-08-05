@@ -85,9 +85,12 @@ class FakeDifyScoring:
 class FollowUpDifyScoring:
     configured = True
 
+    def __init__(self, score: int = 85) -> None:
+        self.score = score
+
     async def run(self, _scoring_input: Any) -> DifyScoreOutput:
         return DifyScoreOutput(
-            score=85,
+            score=self.score,
             level="A",
             need_follow=True,
             reason="Complete purchasing context",
@@ -267,7 +270,7 @@ async def test_bound_customer_owner_receives_feishu_notification() -> None:
     await LeadScoringOrchestrator(
         FakeSession(),  # type: ignore[arg-type]
         repository,  # type: ignore[arg-type]
-        FollowUpDifyScoring(),  # type: ignore[arg-type]
+        FollowUpDifyScoring(70),  # type: ignore[arg-type]
         feishu,  # type: ignore[arg-type]
     ).score_customer(customer)
 

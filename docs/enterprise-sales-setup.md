@@ -64,7 +64,7 @@ FEISHU_TIMEOUT_SECONDS=15
 Use the admin User Management page to bind each sales account to one
 `feishu_open_id`, then assign customers to that sales account. Dify never calls
 Feishu directly: the FastAPI scoring workflow calls `FeishuService` only when
-`score >= 80` and `need_follow` is true.
+`score >= 70` and `need_follow` is true.
 
 Scoring or notification failures are logged after the WhatsApp customer-service
 reply succeeds and do not change a successful WhatsApp webhook into a failure.

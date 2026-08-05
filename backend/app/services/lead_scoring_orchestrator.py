@@ -175,7 +175,7 @@ class LeadScoringOrchestrator:
         await self.session.commit()
         await self.session.refresh(score)
 
-        if result.score >= 80 and result.need_follow and customer.owner_user_id:
+        if result.score >= 70 and result.need_follow and customer.owner_user_id:
             owner = await self.repository.sales_user(
                 customer.tenant_id, customer.owner_user_id
             )
