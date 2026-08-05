@@ -79,6 +79,7 @@ Nginx
 ---
 
 ## 项目截图
+![系统架构图](images/Architecture.png)
 ![登陆页](images/login.png)
 ![系统首页](images/dashboard.png)
 ![自动回复AI客服PC端6332](images/customer-chatPC端6332.png)
