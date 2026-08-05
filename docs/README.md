@@ -92,7 +92,7 @@ Nginx
 ![飞书通知销售](images/feishu-notify2.png)
 ![飞书通知销售](images/feishu-notify3.png)
 ![自动评分系统](images/lead-score.png)
-![销售人员管理](images/sales staff manage.png)
+![销售人员管理](images/sales_staff_manage.png)
 ---
 
 ## Deployment
