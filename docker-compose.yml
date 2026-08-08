@@ -263,6 +263,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ${LETSENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
+      - /var/www/AI-Sales-Agent-Demo:/var/www/AI-Sales-Agent-Demo:ro
     depends_on:
       backend:
         condition: service_healthy
